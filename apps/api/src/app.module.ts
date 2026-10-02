@@ -7,6 +7,7 @@ import { DatabaseModule } from './database/database.module';
 import { HealthModule } from './health/health.module';
 import { AuthModule } from './modules/auth/auth.module';
 import { NotificationsModule } from './modules/notifications/notifications.module';
+import { VehiclesModule } from './modules/vehicles/vehicles.module';
 import { RequestContextMiddleware } from './common/middleware/request-context.middleware';
 
 /**
@@ -35,6 +36,7 @@ import { RequestContextMiddleware } from './common/middleware/request-context.mi
     DatabaseModule,
     NotificationsModule,
     AuthModule,
+    VehiclesModule,
     HealthModule,
   ],
   providers: [{ provide: APP_GUARD, useClass: ThrottlerGuard }],

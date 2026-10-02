@@ -9,7 +9,7 @@ import {
   uploadDocumentSchema,
   vehicleSearchSchema,
   vehicleSummarySchema,
-} from './vehicle.schema';
+} from './vehicle.schema.js';
 
 /** Vehicule de reference, valide. */
 const validVehicle = {

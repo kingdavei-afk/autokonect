@@ -168,10 +168,10 @@ export interface PlanTable {
   /** -1 signifie illimite. */
   vehicle_limit: number;
   member_limit: Generated<number>;
-  commission_rate: Generated<Ratio>;
-  price_amount: Generated<MoneyInt>;
+  commission_rate: Ratio;
+  price_amount: MoneyInt;
   currency_code: Generated<string>;
-  features: Generated<Json>;
+  features: Json;
   is_active: Generated<boolean>;
   sort_order: Generated<number>;
   created_at: CreatedAt;
@@ -249,7 +249,7 @@ export interface VehicleCategoryTable {
   id: UuidPk;
   slug: string;
   label: string;
-  attributes_schema: Generated<Json>;
+  attributes_schema: Json;
   icon_url: Nullable<string>;
   sort_order: Generated<number>;
   is_active: Generated<boolean>;
@@ -282,7 +282,7 @@ export interface VehicleTable {
   luggage_capacity: Nullable<number>;
   consumption: Nullable<Ratio>;
   daily_rate: MoneyInt;
-  deposit_amount: Generated<MoneyInt>;
+  deposit_amount: MoneyInt;
   currency_code: Generated<string>;
   with_driver: Generated<boolean>;
   driver_included_in_rate: Generated<boolean>;
@@ -396,7 +396,7 @@ export interface BookingTable {
   pricing_snapshot: Json;
   currency_code: Generated<string>;
   total_amount: MoneyInt;
-  deposit_amount: Generated<MoneyInt>;
+  deposit_amount: MoneyInt;
   /** Taux de commission fige pour la duree de la location (CDCS 8.5). */
   commission_rate: Nullable<Ratio>;
   customer_notes: Nullable<string>;
@@ -471,10 +471,10 @@ export interface PayoutTable {
   owner_id: Nullable<Uuid>;
   period_start: string;
   period_end: string;
-  gross_amount: Generated<MoneyInt>;
-  commission_amount: Generated<MoneyInt>;
-  tax_amount: Generated<MoneyInt>;
-  net_amount: Generated<MoneyInt>;
+  gross_amount: MoneyInt;
+  commission_amount: MoneyInt;
+  tax_amount: MoneyInt;
+  net_amount: MoneyInt;
   currency_code: Generated<string>;
   status: Generated<'draft' | 'approved' | 'processing' | 'paid' | 'failed'>;
   paid_at: Nullable<Timestamp>;
@@ -519,9 +519,9 @@ export interface HandoverTable {
   performed_by: Nullable<Uuid>;
   mileage: Nullable<number>;
   fuel_level: Nullable<number>;
-  photos: Generated<TextArray>;
+  photos: TextArray;
   notes: Nullable<string>;
-  signatures: Generated<TextArray>;
+  signatures: TextArray;
   performed_at: Timestamp;
 }
 
@@ -531,7 +531,7 @@ export interface DamageReportTable {
   handover_id: Nullable<Uuid>;
   reported_by: Nullable<Uuid>;
   description: string;
-  photos: Generated<TextArray>;
+  photos: TextArray;
   estimated_amount: Nullable<MoneyInt>;
   currency_code: Generated<string>;
   status: Generated<
@@ -550,7 +550,7 @@ export interface DisputeTable {
   opened_by: Uuid;
   reason: string;
   description: Nullable<string>;
-  evidence: Generated<TextArray>;
+  evidence: TextArray;
   status: Generated<
     'open' | 'under_review' | 'resolved' | 'closed_without_action' | 'closed_by_timeout'
   >;
@@ -623,7 +623,7 @@ export interface NotificationTable {
   status: Generated<'queued' | 'sending' | 'sent' | 'delivered' | 'failed' | 'bounced'>;
   subject: Nullable<string>;
   body: string;
-  payload: Generated<Json>;
+  payload: Json;
   provider_key: Nullable<string>;
   external_ref: Nullable<string>;
   error: Nullable<string>;
@@ -654,7 +654,7 @@ export interface MessageTable {
   conversation_id: Uuid;
   sender_id: Uuid;
   body: Nullable<string>;
-  attachments: Generated<TextArray>;
+  attachments: TextArray;
   location: Nullable<Json>;
   sent_at: Timestamp;
   deleted_at: DeletedAt;
@@ -672,7 +672,7 @@ export interface CouponTable {
   value: MoneyInt;
   scope: Generated<'platform' | 'category' | 'agency' | 'vehicle'>;
   target_id: Nullable<Uuid>;
-  min_amount: Generated<MoneyInt>;
+  min_amount: MoneyInt;
   max_uses: Nullable<number>;
   used_count: Generated<number>;
   valid_from: Timestamp;

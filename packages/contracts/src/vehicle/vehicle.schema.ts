@@ -325,6 +325,7 @@ export const vehicleSummarySchema = z.object({
   coverUrl: z.string().url().nullable(),
   locationId: z.string().uuid().nullable(),
 });
+export type VehicleSummary = z.infer<typeof vehicleSummarySchema>;
 
 export const vehicleDetailSchema = vehicleSummarySchema.extend({
   plateCountry: z.string().length(2),

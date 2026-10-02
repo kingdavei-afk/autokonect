@@ -17,7 +17,7 @@ import {
   occupiesVehicle,
   wasRefunded,
   type BookingStatus,
-} from './state-machine';
+} from './state-machine.js';
 
 const ALL = BOOKING_STATUSES;
 
@@ -60,7 +60,10 @@ describe('integrite du graphe', () => {
 
   it('rejoint un etat terminal depuis tout etat non terminal', () => {
     // Evite qu'une reservation reste bloquee indefiniment.
-    const reachesTerminal = (from: BookingStatus, seen = new Set<BookingStatus>()): boolean => {
+    const reachesTerminal = (
+      from: BookingStatus,
+      seen: Set<BookingStatus> = new Set<BookingStatus>(),
+    ): boolean => {
       if (seen.has(from)) return false;
       seen.add(from);
 

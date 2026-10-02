@@ -30,8 +30,23 @@ mobile (CDCS §10.3, voir [ADR-001](docs/adr/ADR-001-monorepo.md)).
 - **Authentification complète** : inscription, OTP téléphone, connexion,
   mot de passe oublié, sessions ; jeton d'accès JWT de 15 min et jeton de
   rafraîchissement opaque avec rotation et détection de réutilisation ;
-  RBAC par rôle. 20 tests unitaires, 22 tests de parcours.
+  RBAC par rôle.
+- **Contrats partagés** (`@adkcars/contracts`) : machine à états de
+  réservation (14 états, graphe testé exhaustivement), type monétaire
+  nominal `Centimes`, schémas véhicule.
+- **Module véhicules** : publication, cycle de validation documentaire,
+  recherche géolocalisée avec filtres et disponibilité.
 - Instance PostgreSQL 16.10 portable pour le développement local.
+
+**Bilan des tests : 157 au vert**
+
+| Suite | Volume |
+|---|---|
+| Règles métier en base (`pnpm db:test`) | 10 |
+| Contrats partagés (Vitest) | 102 |
+| API (Vitest) | 20 |
+| Parcours authentification (bout en bout) | 22 |
+| Parcours véhicule (bout en bout) | 23 |
 
 ### Surface d'API
 
@@ -50,6 +65,14 @@ mobile (CDCS §10.3, voir [ADR-001](docs/adr/ADR-001-monorepo.md)).
 | `POST` | `/auth/logout` | authentifié |
 | `POST` | `/auth/logout-all` | authentifié |
 | `GET` | `/auth/me` | authentifié |
+| `GET` | `/vehicles` | authentifié, recherche |
+| `GET` | `/vehicles/mine` | authentifié |
+| `GET` | `/vehicles/:id` | authentifié |
+| `GET` | `/vehicles/:id/publication-readiness` | propriétaire ou admin |
+| `POST` | `/vehicles` | propriétaire |
+| `PATCH` | `/vehicles/:id` | propriétaire ou admin |
+| `POST` | `/vehicles/:id/documents` | propriétaire ou admin |
+| `POST` | `/vehicles/:id/submit` | propriétaire ou admin |
 
 Toute route non listée est **protégée par défaut** : l'oubli du
 décorateur `@Public` est impossible par construction.
@@ -134,7 +157,8 @@ curl.exe http://127.0.0.1:3000/health/ready
 
 ```powershell
 # API démarrée sur :3000, base migrée
-.\apps\api\test\auth-flow.ps1
+.\apps\api\test\auth-flow.ps1     # 22 vérifications
+.\apps\api\test\vehicles-flow.ps1 # 23 vérifications
 ```
 
 22 vérifications de bout en bout : inscription, vérification OTP,
@@ -194,6 +218,12 @@ Ces règles viennent du CDC et sont appliquées par le code, pas seulement
 9. **Toute transition d'état de réservation est journalisée** : acteur,
    horodatage, état source, état cible.
 10. **La sortie standard est du JSON**, sans exception, framework inclus.
+11. **Toute erreur 5xx est journalisée avec sa pile**, corrélée par
+    `request_id`. Une erreur non journalisée est un bug sans diagnostic.
+12. **Un véhicule n'est jamais publié directement** : il passe par la
+    validation documentaire puis par un administrateur.
+13. **Un compte qui n'est pas le propriétaire reçoit 404, pas 403** —
+    répondre « interdit » confirmerait l'existence de l'annonce.
 
 ---
 

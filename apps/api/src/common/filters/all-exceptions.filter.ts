@@ -2,10 +2,14 @@ import {
   Catch,
   HttpException,
   HttpStatus,
+  Inject,
+  Injectable,
   type ArgumentsHost,
   type ExceptionFilter,
 } from '@nestjs/common';
 import type { Request, Response } from 'express';
+
+import { StructuredLogger } from '../logger/structured-logger';
 
 interface ErrorBody {
   statusCode: number;
@@ -26,7 +30,10 @@ interface ErrorBody {
  * journal serveur conserve le detail complet, correle par request_id.
  */
 @Catch()
+@Injectable()
 export class AllExceptionsFilter implements ExceptionFilter {
+  constructor(@Inject(StructuredLogger) private readonly logger: StructuredLogger) {}
+
   catch(exception: unknown, host: ArgumentsHost): void {
     const ctx = host.switchToHttp();
     const response = ctx.getResponse<Response>();
@@ -61,6 +68,11 @@ export class AllExceptionsFilter implements ExceptionFilter {
           message = exception.message;
         }
       }
+    } else {
+      // Erreur non HTTP : c'est un defaut. Elle doit etre journalisee
+      // integralement, sinon aucune trace ne subsiste et le diagnostic
+      // devient impossible (CDCS 11.8).
+      this.logUnexpected(request, status, exception);
     }
 
     const body: ErrorBody = {
@@ -74,6 +86,37 @@ export class AllExceptionsFilter implements ExceptionFilter {
     };
 
     response.status(status).json(body);
+  }
+
+  /** Journalise une erreur 5xx avec sa cause et sa pile. */
+  private logUnexpected(
+    request: Request,
+    status: number,
+    exception: unknown,
+  ): void {
+    const context = {
+      requestId: request.requestId,
+      method: request.method,
+      path: request.originalUrl,
+      status,
+      ip: request.ip,
+      userAgent: request.headers['user-agent'],
+    };
+
+    if (exception instanceof Error) {
+      this.logger.error('exception non geree', {
+        ...context,
+        name: exception.name,
+        error: exception.message,
+        stack: exception.stack?.split('\n').slice(0, 12).join('\n'),
+      });
+      return;
+    }
+
+    this.logger.error('exception non geree (non Error)', {
+      ...context,
+      received: typeof exception,
+    });
   }
 }
 

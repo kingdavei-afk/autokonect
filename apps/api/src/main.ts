@@ -54,7 +54,7 @@ async function bootstrap(): Promise<void> {
   });
 
   // ---- format d'erreur unique ----------------------------------------
-  app.useGlobalFilters(new AllExceptionsFilter());
+  app.useGlobalFilters(await app.resolve(AllExceptionsFilter));
 
   app.set('trust proxy', 1);
 

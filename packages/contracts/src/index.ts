@@ -89,4 +89,5 @@ export type {
   UploadDocumentInput,
   VehicleDetail,
   VehicleSearchInput,
+  VehicleSummary,
 } from './vehicle/vehicle.schema.js';

@@ -1,5 +1,6 @@
 import { Global, Module } from '@nestjs/common';
 
+import { AllExceptionsFilter } from '../filters/all-exceptions.filter';
 import { StructuredLogger } from '../logger/structured-logger';
 import { APP_CONFIG } from '../tokens';
 import { loadConfig, type AppConfig } from './env.validation';
@@ -13,13 +14,16 @@ export const appConfigProvider = {
 };
 
 /**
- * La configuration validee est figee au demarrage. Aucun module ne lit
- * `process.env` directement : cela rendrait la configuration impossible a
- * tester et les secrets impossibles a tracer.
+ * Infrastructure transverse : configuration, journalisation et
+ * normalisation des erreurs.
+ *
+ * Ces trois elements sont globaux par nature — ils concernent toutes les
+ * routes — et doivent pouvoir etre resolus avant tout module metier
+ * (CDCS 12.4).
  */
 @Global()
 @Module({
-  providers: [appConfigProvider, StructuredLogger],
-  exports: [APP_CONFIG, StructuredLogger],
+  providers: [appConfigProvider, StructuredLogger, AllExceptionsFilter],
+  exports: [APP_CONFIG, StructuredLogger, AllExceptionsFilter],
 })
 export class ConfigModule {}

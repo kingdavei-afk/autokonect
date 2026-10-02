@@ -15,7 +15,7 @@ import {
   subtractCents,
   sumMoney,
   toNumber,
-} from './cents';
+} from './cents.js';
 
 describe('cents', () => {
   it('accepte un entier', () => {

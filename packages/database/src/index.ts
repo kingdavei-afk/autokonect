@@ -10,7 +10,13 @@
 // Reexporte pour permettre `import { sql } from '@adkcars/database'`
 // sans obliger chaque service a dependre directement de kysely.
 export { sql } from 'kysely';
-export type { ExpressionBuilder, SqlBool } from 'kysely';
+export type {
+  Expression,
+  ExpressionBuilder,
+  ExtractTypeFromReferenceExpression,
+  Selectable,
+  SqlBool,
+} from 'kysely';
 
 export { createDatabase, ping, type DatabaseOptions, type Db } from './connection.js';
 
