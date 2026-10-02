@@ -1,0 +1,45 @@
+{
+  "name": "adkcars-ci",
+  "version": "0.1.0",
+  "private": true,
+  "description": "AdkCars CI (AutoKonnect) - Plateforme SaaS de location de vehicules, Cote d'Ivoire",
+  "license": "UNLICENSED",
+  "engines": {
+    "node": ">=22.0.0",
+    "pnpm": ">=10.0.0"
+  },
+  "packageManager": "pnpm@10.34.6",
+  "scripts": {
+    "build": "pnpm -r --filter \"./packages/**\" build && pnpm --filter @adkcars/api build",
+    "dev": "pnpm --parallel --filter @adkcars/api --filter @adkcars/web dev",
+    "dev:api": "pnpm --filter @adkcars/api dev",
+    "dev:web": "pnpm --filter @adkcars/web dev",
+    "lint": "pnpm -r lint",
+    "typecheck": "pnpm -r typecheck",
+    "test": "pnpm -r test",
+    "test:api": "pnpm --filter @adkcars/api test",
+    "db:migrate": "pnpm --filter @adkcars/database migrate",
+    "db:migrate:status": "pnpm --filter @adkcars/database migrate:status",
+    "db:reset": "pnpm --filter @adkcars/database migrate:reset",
+    "db:test": "pnpm --filter @adkcars/database test:schema",
+    "format": "prettier --write \"**/*.{ts,tsx,js,json,md,yml,yaml,prisma,sql}\"",
+    "format:check": "prettier --check \"**/*.{ts,tsx,js,json,md,yml,yaml,prisma,sql}\"",
+    "clean": "rimraf \"**/node_modules\" \"**/dist\" \"**/.next\""
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "prettier": "^3.4.2",
+    "rimraf": "^6.0.1",
+    "typescript": "^5.7.2"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "@nestjs/core",
+      "@prisma/client",
+      "@prisma/engines",
+      "esbuild",
+      "prisma",
+      "sharp"
+    ]
+  }
+}

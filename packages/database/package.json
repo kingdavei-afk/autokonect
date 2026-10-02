@@ -1,0 +1,38 @@
+{
+  "name": "@adkcars/database",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Acces base de donnees : types Kysely, runner de migrations, fixtures",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./types": {
+      "types": "./dist/types.d.ts",
+      "default": "./dist/types.js"
+    }
+  },
+  "files": ["dist", "migrations"],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc --noEmit",
+    "migrate": "tsx src/cli.ts up",
+    "migrate:status": "tsx src/cli.ts status",
+    "migrate:reset": "tsx src/cli.ts reset",
+    "test:schema": "tsx tests/run-schema-tests.ts"
+  },
+  "dependencies": {
+    "dotenv": "^16.4.7",
+    "kysely": "^0.27.5",
+    "pg": "^8.13.1"
+  },
+  "devDependencies": {
+    "@types/pg": "^8.11.10",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2"
+  }
+}

@@ -1,0 +1,41 @@
+# Fichiers et dossiers à ne jamais versionner
+node_modules/
+.pnpm-store/
+dist/
+build/
+out/
+.next/
+.turbo/
+coverage/
+*.tsbuildinfo
+
+# Outillage local (PostgreSQL portable, etc.)
+.tools/
+
+# Environnement
+.env
+.env.local
+.env.*.local
+!.env.example
+
+# Journaux
+*.log
+npm-debug.log*
+pnpm-debug.log*
+yarn-error.log*
+
+# Editeurs / OS
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/*
+!.vscode/extensions.json
+*.swp
+
+# Fichiers de verrou applicatif (Word, Excel...) : ~$nom.docx
+~$*
+
+# Temporaires
+tmp/
+temp/
+*.tmp
