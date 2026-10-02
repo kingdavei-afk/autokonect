@@ -1,0 +1,36 @@
+{
+  "name": "@adkcars/contracts",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Contrats partages entre l'API et les clients : types, schemas Zod, machine a etats",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./booking": {
+      "types": "./dist/booking/state-machine.d.ts",
+      "default": "./dist/booking/state-machine.js"
+    },
+    "./money": {
+      "types": "./dist/money/cents.d.ts",
+      "default": "./dist/money/cents.js"
+    }
+  },
+  "files": ["dist"],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "zod": "^3.25.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.2",
+    "vitest": "^2.1.8"
+  }
+}
