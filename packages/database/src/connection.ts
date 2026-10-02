@@ -57,7 +57,7 @@ export function createDatabase(options: DatabaseOptions): Db {
     );
   });
 
-  const config: KyselyConfig<Database> = {
+  const config: KyselyConfig = {
     dialect: new PostgresDialect({ pool }),
   };
 
