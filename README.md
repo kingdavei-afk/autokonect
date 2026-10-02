@@ -24,9 +24,35 @@ mobile (CDCS §10.3, voir [ADR-001](docs/adr/ADR-001-monorepo.md)).
   27 triggers**, montants en `bigint`, clés UUID, horodatage UTC.
 - Règles métier **imposées par la base** et vérifiées par `pnpm db:test`
   (10 tests, tous au vert).
-- API NestJS : configuration validée au démarrage, journal JSON, sonde de
-  vivacité et de disponibilité, format d'erreur unique.
+- API NestJS : configuration validée au démarrage, journal JSON, sondes de
+  vivacité et de disponibilité, format d'erreur unique, limitation de
+  débit.
+- **Authentification complète** : inscription, OTP téléphone, connexion,
+  mot de passe oublié, sessions ; jeton d'accès JWT de 15 min et jeton de
+  rafraîchissement opaque avec rotation et détection de réutilisation ;
+  RBAC par rôle. 20 tests unitaires, 22 tests de parcours.
 - Instance PostgreSQL 16.10 portable pour le développement local.
+
+### Surface d'API
+
+| Méthode | Route | Accès |
+|---|---|---|
+| `GET` | `/` | public |
+| `GET` | `/health/live` | public |
+| `GET` | `/health/ready` | public (503 si base indisponible) |
+| `POST` | `/auth/register` | public, 5/min |
+| `POST` | `/auth/verify-phone` | public, 5/min |
+| `POST` | `/auth/login` | public, 10/min |
+| `POST` | `/auth/refresh` | public, 30/min |
+| `POST` | `/auth/password/forgot` | public, 3/5 min |
+| `POST` | `/auth/password/reset` | public, 5/5 min |
+| `POST` | `/auth/password/change` | authentifié |
+| `POST` | `/auth/logout` | authentifié |
+| `POST` | `/auth/logout-all` | authentifié |
+| `GET` | `/auth/me` | authentifié |
+
+Toute route non listée est **protégée par défaut** : l'oubli du
+décorateur `@Public` est impossible par construction.
 
 ---
 
@@ -103,6 +129,21 @@ curl.exe http://127.0.0.1:3000/health/ready
 | `pnpm db:migrate:status` | État des migrations |
 | `pnpm db:reset` | Recrée le schéma (développement uniquement) |
 | `pnpm db:test` | **10 tests de règles métier sur base réelle** |
+
+### Tests du parcours d'authentification
+
+```powershell
+# API démarrée sur :3000, base migrée
+.\apps\api\test\auth-flow.ps1
+```
+
+22 vérifications de bout en bout : inscription, vérification OTP,
+rotation des jetons, détection de réutilisation, non-énumération des
+comptes, limitation de débit.
+
+> Le script attend 62 s s'il rencontre un `429` : le limiteur de débit
+> compte par IP et toutes les requêtes viennent de `127.0.0.1`. C'est un
+> comportement attendu, pas un contournement de test.
 
 ---
 

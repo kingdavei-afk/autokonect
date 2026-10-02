@@ -9,16 +9,23 @@ import { z } from 'zod';
  * ici ; il ne doit jamais se transformer en 500 en exploitation.
  */
 
-const isProduction = process.env['NODE_ENV'] === 'production';
+/**
+ * Prefixe des valeurs de developpement livrees dans `.env.example`.
+ * Toute configuration portant ce prefixe est refusee en production.
+ */
+const DEV_SECRET_PREFIX = 'DEV-ONLY';
 
-/** Secrets de developpement : acceptes uniquement hors production. */
-const devSecret = z
-  .string()
-  .min(1)
-  .refine((value) => !isProduction || !value.startsWith('DEV-ONLY'), {
-    message:
-      'Un secret de developpement ne peut pas etre utilise en production (CDCS 12.4)',
-  });
+/**
+ * Un secret est une chaine non vide. Les regles conditionnelles
+ * (interdit en production, seuil de memoire, origines CORS) sont
+ * verifiees dans le `superRefine` du schema objet : c'est le seul
+ * endroit ou `NODE_ENV` de la configuration VALIDEE est disponible.
+ *
+ * Lesevaluated au chargement du module, elles ne verifiersent pas la
+ * configuration reellement fournie et laisseraient passer une
+ * configuration dangereuse.
+ */
+const secret = z.string().min(1, 'Secret obligatoire.');
 
 export const envSchema = z
   .object({
@@ -42,8 +49,8 @@ export const envSchema = z
     REDIS_URL: z.string().url().startsWith('redis://').default('redis://127.0.0.1:6379/0'),
 
     // ---- Authentification (CDCS 12.2) ------------------------------
-    JWT_ACCESS_SECRET: devSecret,
-    JWT_REFRESH_SECRET: devSecret,
+    JWT_ACCESS_SECRET: secret,
+    JWT_REFRESH_SECRET: secret,
     JWT_ACCESS_TTL: z.string().default('15m'),
     JWT_REFRESH_TTL: z.string().default('30d'),
     ARGON2_MEMORY_COST: z.coerce.number().int().min(8_192).max(262_144).default(19_456),
@@ -77,24 +84,48 @@ export const envSchema = z
     THROTTLE_LIMIT_MEDIUM: z.coerce.number().int().min(1).default(100),
   })
   .superRefine((env, ctx) => {
-    // En production, la memoire Argon2 doit etre serieusement calibree.
-    if (env.NODE_ENV === 'production' && env.ARGON2_MEMORY_COST < 19_456) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ['ARGON2_MEMORY_COST'],
-        message:
-          'ARGON2_MEMORY_COST doit valoir au moins 19456 en production (CDCS 12.2)',
-      });
+    const inProduction = env.NODE_ENV === 'production';
+
+    // ---- Secrets de developpement ---------------------------------
+    if (inProduction) {
+      for (const key of ['JWT_ACCESS_SECRET', 'JWT_REFRESH_SECRET'] as const) {
+        if (env[key].startsWith(DEV_SECRET_PREFIX)) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: [key],
+            message:
+              `un secret de developpement (prefixe "${DEV_SECRET_PREFIX}") ne peut ` +
+              'pas etre utilise en production (CDCS 12.4)',
+          });
+        }
+      }
+
+      // ---- Argon2 ---------------------------------------------------
+      if (env.ARGON2_MEMORY_COST < 19_456) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['ARGON2_MEMORY_COST'],
+          message:
+            'doit valoir au moins 19456 en production : sous ce seuil, le hachage ' +
+            'des mots de passe est trop rapide pour resister (CDCS 12.2)',
+        });
+      }
+
+      // ---- CORS ----------------------------------------------------
+      const origins = env.CORS_ORIGINS.split(',').map((o) => o.trim());
+      const insecure = origins.filter((o) => o && !o.startsWith('https://'));
+
+      if (insecure.length > 0) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['CORS_ORIGINS'],
+          message:
+            `origines non securisees interdites en production (https obligatoire) : ${insecure.join(', ')}`,
+        });
+      }
     }
 
-    if (env.NODE_ENV === 'production' && !env.CORS_ORIGINS.includes('https://')) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ['CORS_ORIGINS'],
-        message: 'CORS_ORIGINS doit designer des origines https en production',
-      });
-    }
-
+    // ---- Stockage objet -------------------------------------------
     if (env.STORAGE_DRIVER === 's3') {
       const required = [
         'STORAGE_BUCKET',
@@ -110,6 +141,17 @@ export const envSchema = z
           });
         }
       }
+    }
+
+    // ---- Separation des privileges (CDCS 12.1) --------------------
+    if (env.DIRECT_DATABASE_URL && env.DIRECT_DATABASE_URL === env.DATABASE_URL) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['DATABASE_URL'],
+        message:
+          'DATABASE_URL ne doit pas utiliser le role privilegie des migrations ' +
+          '(DIRECT_DATABASE_URL) : l application doit disposer des droits minimaux',
+      });
     }
   });
 
