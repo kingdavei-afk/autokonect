@@ -22,6 +22,7 @@ export {
   allowedTransitions,
   allowedTransitionsForActor,
   assertTransition,
+  bookingStatusSchema,
   canTransition,
   isActive,
   isBookingStatus,
@@ -37,6 +38,54 @@ export type {
   RefundedStatus,
   TerminalStatus,
 } from './booking/state-machine.js';
+
+// ---- Contrats de reservation (CDCS 8) -------------------------------------
+export {
+  availabilityQuerySchema,
+  bookingDetailSchema,
+  bookingFilterSchema,
+  bookingHistoryEntrySchema,
+  bookingIdSchema,
+  bookingListSchema,
+  bookingReferenceSchema,
+  bookingSummarySchema,
+  cancelBookingSchema,
+  createBookingSchema,
+  transitionBookingSchema,
+} from './booking/booking.schema.js';
+export type {
+  AvailabilityQueryInput,
+  BookingDetail,
+  BookingFilterInput,
+  BookingHistoryEntry,
+  BookingSummary,
+  CancelBookingInput,
+  CreateBookingInput,
+  TransitionBookingInput,
+} from './booking/booking.schema.js';
+
+// ---- Tarification (CDCS 8.4) ----------------------------------------------
+export {
+  DAY_MS,
+  GRACE_PERIOD_MS,
+  HOUR_MS,
+  MAX_RENTAL_DAYS,
+  MINIMUM_BILLED_DAYS,
+  MINIMUM_DAILY_RATE,
+  assertPlausibleDuration,
+  computeBilledDays,
+  computeOvertime,
+  computePricing,
+  hourlyRate,
+  overlapsRange,
+} from './booking/pricing.js';
+export type {
+  OvertimeBreakdown,
+  OvertimeInput,
+  PricingBreakdown,
+  PricingInput,
+  PricingLine,
+} from './booking/pricing.js';
 
 // ---- Montants (CDCS 4.3) --------------------------------------------------
 export {
@@ -87,6 +136,7 @@ export {
   moneyInputSchema,
   moneyOutputSchema,
   paginated,
+  paginationQuerySchema,
   paginationSchema,
   plateSchema,
   ratingOutputSchema,

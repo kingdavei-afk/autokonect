@@ -46,19 +46,20 @@ mobile (CDCS §10.3, voir [ADR-001](docs/adr/ADR-001-monorepo.md)).
   partenaire.
 - Instance PostgreSQL 16.10 portable pour le développement local.
 
-**Bilan des tests : 265 au vert**
+**Bilan des tests : 347 au vert**
 
 | Suite | Volume |
 |---|---|
 | Règles métier en base (`pnpm db:test`) | 11 |
 | Commission et trésorerie (`pnpm db:commission`) | 23 |
 | Privilèges du rôle applicatif (`pnpm db:privileges`) | 8 |
-| Contrats partagés (Vitest) | 102 |
+| Contrats partagés (Vitest) | 128 |
 | API (Vitest) | 33 |
 | Parcours authentification (bout en bout) | 22 |
 | Parcours véhicule (bout en bout) | 23 |
 | Back-office de validation (bout en bout) | 26 |
 | Flux temps réel SSE (bout en bout) | 17 |
+| **Réservation (bout en bout)** | **56** |
 
 ### Surface d'API
 
@@ -91,6 +92,12 @@ mobile (CDCS §10.3, voir [ADR-001](docs/adr/ADR-001-monorepo.md)).
 | `POST` | `/admin/vehicles/:id/decision` | admin, publier ou refuser |
 | `GET` | `/realtime/events` | authentifié, flux SSE |
 | `GET` | `/realtime/status` | authentifié, état du transport |
+| `POST` | `/bookings` | client, refusée à un administrateur |
+| `GET` | `/bookings` | filtré par rôle : client, fournisseur, admin |
+| `GET` | `/bookings/vehicle/:vehicleId/availability` | authentifié, disponibilité seule |
+| `GET` | `/bookings/:id` | concerné ou admin (404 sinon) |
+| `POST` | `/bookings/:id/transitions` | concerné ou admin, verrou optimiste |
+| `POST` | `/bookings/:id/cancel` | client ou fournisseur, motif obligatoire |
 
 Toute route non listée est **protégée par défaut** : l'oubli du
 décorateur `@Public` est impossible par construction.
@@ -186,6 +193,7 @@ pnpm build
 .\apps\api\test\vehicles-flow.ps1  # 23 vérifications
 .\apps\api\test\admin-flow.ps1     # 26 vérifications
 .\apps\api\test\realtime-flow.ps1  # 17 vérifications
+.\apps\api\test\booking-flow.ps1   # 56 vérifications
 ```
 
 Ces tests lisent le code OTP dans `apps\api\api.err.log`, écrit par le
@@ -196,6 +204,12 @@ est introuvable et le parcours échoue sur un « 401 » sans explication.
 Le parcours temps réel ouvre un flux SSE sur une connexion TCP brute et
 vérifie qu'un événement produit **après** l'ouverture est bien reçu — un
 flux qui ne rejoue que l'historique passerait sinon pour fonctionnel.
+
+Le parcours réservation (56 vérifications) couvre les bornes qui
+produisent les litiges : bornes exclusives d'une plage, refus du
+chevauchement **par la base**, verrou de version face à deux
+transitions concurrentes, refus d'un administrateur de réserver pour
+lui, et refus d'un fournisseur d'annuler au nom du client.
 
 22 vérifications d'authentification : inscription, vérification OTP,
 rotation des jetons, détection de réutilisation, non-énumération des
@@ -287,6 +301,21 @@ Ces règles viennent du CDC et sont appliquées par le code, pas seulement
     (A-18). Une instance peut être détruite sans préavis. Tout ce qui
     doit survivre est dans PostgreSQL — c'est pourquoi le temps réel
     passe de Socket.IO à SSE et pourquoi le volume du pool vaut 1.
+23. **Toute transition porte une version attendue** (CDCS 8.1). Deux
+    agents lisent la même réservation « payée » et demandent chacun une
+    transition différente : sans contrôle de version, la seconde
+    écriture **écrase** la première et une annulation disparaît en
+    silence. Le refus est un 409 `VERSION_CONFLIT` qui transmet la
+    version courante.
+24. **Le devis est figé à la création.** `pricing_snapshot` porte le
+    détail, le taux de commission **et sa provenance**. Une facture déjà
+    présentée au client ne bouge pas, même si le tarif du véhicule ou la
+    formule du partenaire change le lendemain — et un litige sur un
+    pourcentage reste arbitrable.
+25. **Un état terminal ne ressort pas.** Annuler une location déjà
+    commencée, relancer une réservation clôturée, résoudre un litige à
+    la place du client : chaque cas est refusé explicitement, avec la
+    liste de ce qui serait possible.
 15. **Un véhicule publié dont le tarif change repasse en validation.**
     La modification doit être revue avant de redevenir visible.
 16. **La publication est bloquée si un document obligatoire est

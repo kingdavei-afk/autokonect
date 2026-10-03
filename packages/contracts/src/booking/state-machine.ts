@@ -12,6 +12,8 @@
  * client, et la tester exhaustivement.
  */
 
+import { z } from 'zod';
+
 export const BOOKING_STATUSES = [
   'draft',
   'awaiting_payment',
@@ -130,6 +132,22 @@ export type ActiveStatus = (typeof ACTIVE_STATUSES)[number];
 export function isBookingStatus(value: string): value is BookingStatus {
   return (BOOKING_STATUSES as readonly string[]).includes(value);
 }
+
+/**
+ * Liste des etats sous forme de schema.
+ *
+ * La validation Zod est derivee de `BOOKING_STATUSES` plutot que
+ * redigee a part : une liste ecrite deux fois diverge des la premiere
+ * evolution, et la divergence se manifeste comme un refus a tort d'un
+ * etat valide.
+ *
+ * L'import de `zod` ici est justifie : ce module est la source unique de
+ * verite des etats, donc c'est lui qui doit exposer la forme exploitable
+ * par la validation d'entree.
+ */
+export const bookingStatusSchema = z.enum(
+  BOOKING_STATUSES as unknown as [BookingStatus, ...BookingStatus[]],
+);
 
 export function isTerminal(status: BookingStatus): status is TerminalStatus {
   return (TERMINAL_STATUSES as readonly string[]).includes(status);

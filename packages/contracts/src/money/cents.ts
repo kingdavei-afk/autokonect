@@ -194,9 +194,21 @@ export function formatMoney(
   const major = (value / divisor).toString();
   const minor = hasSubunits ? (value % divisor).toString().padStart(2, '0') : '';
 
+  // ------------------------------------------------------------------------
+  // ZERO decimale sur la partie entiere, TOUJOURS
+  // ------------------------------------------------------------------------
+  // La partie des subunit est ajoutee a la main, avec le separateur du
+  // montant directement. Demander deux decimales a `Intl` ET ajouter la
+  // partie decimale ensuite produisait « 123,00,00 EUR » pour 12 300
+  // centimes : `Intl` formatait deja 123 en « 123,00 », puis le code
+  // collait « ,00 » derriere.
+  //
+  // Le bug ne se voyait sur aucune devise du marche : le XOF et le XAF
+  // n'ont pas de subunit, donc le cas n'etait jamais atteint. Il
+  // apparaitrait des le premier montant en euros ou en dollars.
   const formatted = new Intl.NumberFormat(locale, {
-    minimumFractionDigits: hasSubunits ? 2 : 0,
-    maximumFractionDigits: hasSubunits ? 2 : 0,
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 0,
   }).format(Number(major));
 
   return `${formatted}${hasSubunits ? `,${minor}` : ''} ${currency}`;

@@ -835,6 +835,89 @@ base_commissionnable = prix_total − TVA − caution − pénalités_reversées
 - Un véhicule `PUBLIE` sans aucune plage disponible n'apparaît pas sur les dates correspondantes, mais reste visible si l'utilisateur consulte une autre date.
 - La maintenance est déclarée par le fournisseur sur une plage ; elle bloque le calendrier et déclenche l'information des réservations concernées `[TBD]`.
 
+### 8.6 bis — Règles d'implémentation de la réservation
+
+Les invariants du §8.1 sont posés. Six décisions d'implémentation n'y
+figurent pas, et chacune change le comportement observable du produit.
+
+#### 1. Le verrou de version est obligatoire (invariant 2, renforcé)
+
+L'invariant 2 exige qu'une transition non autorisée soit refusée. Il ne
+couvre pas le cas **concurrent** : deux agents lisent la réservation à
+l'état « payée » et demandent chacun une transition différente. Sans
+contrôle de version, la seconde écriture écrase la première — une
+annulation disparaît en silence, ou un véhicule est déclaré « en cours »
+sur une réservation annulée.
+
+Toute transition porte donc une `expectedVersion`. Le refus est un
+`409 VERSION_CONFLIT` qui transmet la **version courante**, pour que le
+client puisse rejouer sa demande sans relire la ressource à la main.
+
+`expectedVersion` est exigée à la réception et vérifiée dans la clause
+`WHERE` de l'`UPDATE`. Une transition qui modifie **zéro** ligne est
+refusée et la transaction annulée : aucune trace partielle.
+
+#### 2. Le refus d'accès est un 404, pas un 403
+
+Une réservation qui n'appartient pas à l'acteur renvoie `404`, à
+l'identique d'une réservation inexistante. Un `403` confirmerait son
+existence et permettrait d'énumérer le carnet de commandes d'un concurrent
+par sondage d'identifiants.
+
+Le même raisonnement s'applique à la disponibilité : la réponse dit
+« indisponible », jamais « réservé jusqu'au 14 ».
+
+#### 3. L'audit est écrit dans la même transaction que l'état
+
+L'invariant 3 exige une ligne par transition. Si l'audit est écrit
+après le `COMMIT`, il peut disparaître sur un échec : il ne resterait
+qu'un changement d'état inexpliqué, ce qui est précisément ce que
+l'audit doit empêcher.
+
+#### 4. Le véhicule est réservé dès `awaiting_payment`
+
+L'invariant 1 dit que le véhicule est indisponible dès que la
+réservation quitte `draft`. Comme `draft` est le panier du client et
+non une réservation enregistrée, toute réservation **enregistrée**
+occupe le véhicule, y compris en attente de paiement.
+
+Une réservation sans paiement expire au bout de 30 minutes. Sans ce
+délai, un panier abandonné immobiliserait un véhicule indéfiniment —
+c'est la panne qui rend un marché inexploitable pour ses fournisseurs.
+
+#### 5. Un administrateur ne réserve pas pour lui
+
+Un administrateur qui réserve n'a plus d'administrateur : il devient
+un acteur commercial, avec les mêmes règles que n'importe quel client.
+La route répond `403 ADMIN_CANNOT_BOOK`.
+
+Symétriquement, un fournisseur ne peut pas enregistrer une annulation
+`by: 'client'` : cela changerait le sort de la commission et de la
+pénalité. Réponse `403 ACTOR_MISMATCH`.
+
+#### 6. Le devis fige porte la provenance du taux
+
+`pricing_snapshot` conserve le détail des lignes, le nombre de jours
+facturés, le taux de commission **et sa provenance**
+(`partner_override` | `plan` | `platform_default`).
+
+Sans la provenance, un litige sur un pourcentage demanderait de
+reconstituer l'historique des formules — impossible après coup.
+
+#### Répartition des règles entre les couches
+
+| Invariant du §8.1 | Couche |
+|---|---|
+| 1. Véhicule indisponible | **base** — trigger `prevent_booking_overlap` |
+| 2. Transition refusée | contrats + service |
+| 3. Audit de chaque transition | service, dans la transaction |
+| 4. Aucun état modifié manuellement | base + procédure tracée |
+
+Le trigger est le **seul** endroit où la concurrence de deux réservations
+est traitée atomiquement : les deux requêtes passent le contrôle
+applicatif, une seule aboutit. Le contrôle applicatif rend donc les
+refus explicites ; la base les rend impossibles à contourner.
+
 ### 8.7 Règle de suppression
 
 | Entité | Politique |

@@ -164,6 +164,26 @@ export type UpdateVehicleInput = z.infer<typeof updateVehicleSchema>;
 // ---------------------------------------------------------------------------
 
 /** Filtres de recherche catalogue (CDCS 9). */
+/**
+ * Pagination d'une REQUETE.
+ *
+ * ⚠️ A NE PAS CONFONDRE avec `paginationSchema`, qui decrit la REPONSE.
+ *
+ * Les deux exposent `page` et `perPage`, et rien ne les distingue a la
+ * lecture. Utiliser la mauvaise fait exiger au client des champs qu'il
+ * n'envoie jamais — `total`, `totalPages`, `hasNext`, `hasPrevious` — et
+ * chaque liste se termine alors par un « 400 Donnees invalides » sur une
+ * requete parfaitement legitime.
+ *
+ * C'est exactement ce qui est arrive sur `/bookings`. Les deux formes
+ * sont donc nommees, et la forme de requete est extraite pour ne plus
+ * etre recopiee dans chaque schema de recherche.
+ */
+export const paginationQuerySchema = z.object({
+  page: z.coerce.number().int().min(1).default(1),
+  perPage: z.coerce.number().int().min(1).max(50).default(20),
+});
+
 export const vehicleSearchSchema = z
   .object({
     // Texte libre : marque, modele, categorie.
@@ -208,8 +228,7 @@ export const vehicleSearchSchema = z
       .default('relevance'),
 
     // Pagination
-    page: z.coerce.number().int().min(1).default(1),
-    perPage: z.coerce.number().int().min(1).max(50).default(20),
+    ...paginationQuerySchema.shape,
   })
   .strict()
   .superRefine((value, ctx) => {
@@ -361,6 +380,7 @@ export type PublicationReadiness = z.infer<typeof publicationReadinessSchema>;
 // Pagination
 // ---------------------------------------------------------------------------
 
+/** Pagination d'une REPONSE. */
 export const paginationSchema = z.object({
   page: z.number().int().min(1),
   perPage: z.number().int().min(1),

@@ -58,6 +58,7 @@ export class AllExceptionsFilter implements ExceptionFilter {
         const record = payload as Record<string, unknown>;
         code = typeof record['code'] === 'string' ? record['code'] : defaultCodeFor(status);
         const rawMessage = record['message'];
+
         if (typeof rawMessage === 'string') {
           message = rawMessage;
         } else if (Array.isArray(rawMessage)) {
@@ -66,6 +67,23 @@ export class AllExceptionsFilter implements ExceptionFilter {
           details = rawMessage;
         } else {
           message = exception.message;
+        }
+
+        // ------------------------------------------------------------------------
+        // `details` FOURNI PAR LE SERVICE
+        // ------------------------------------------------------------------------
+        // Ce champ est un CONTRAT, pas une fuite : la liste des transitions
+        // possibles d'une reservation, la version courante en cas de conflit.
+        // Sans lui, le client recoit un « 409 » sans aucune indication de ce
+        // qu'il peut faire, et il ne peut que reessayer a l'aveugle.
+        //
+        // Ce qui est autorise ici est strictement ce que le service a place
+        // sous cette cle : des etats, des versions, des listes fermees. Le
+        // filtre ne deballe rien d'autre — ni pile, ni SQL, ni structure de
+        // base. Un service qui y mettait un detail technique le publierait
+        // par accident ; c'est pourquoi la cle est unique et nommee.
+        if (record['details'] !== undefined) {
+          details = record['details'];
         }
       }
     } else {

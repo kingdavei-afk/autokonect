@@ -8,6 +8,7 @@ import { HealthModule } from './health/health.module';
 import { RequestContextMiddleware } from './common/middleware/request-context.middleware';
 import { ThrottlerConfigModule } from './common/throttler/throttler-config.module';
 import { AuthModule } from './modules/auth/auth.module';
+import { BookingModule } from './modules/booking/booking.module';
 import { NotificationsModule } from './modules/notifications/notifications.module';
 import { VehiclesModule } from './modules/vehicles/vehicles.module';
 import { AdminVehiclesModule } from './modules/admin-vehicles/admin-vehicles.module';
@@ -34,6 +35,7 @@ import { RealtimeModule } from './modules/realtime/realtime.module';
     AuthModule,
     VehiclesModule,
     AdminVehiclesModule,
+    BookingModule,
     RealtimeModule,
     HealthModule,
   ],
