@@ -39,18 +39,19 @@ mobile (CDCS §10.3, voir [ADR-001](docs/adr/ADR-001-monorepo.md)).
 - **Back-office de validation** : file de revue, examen des documents,
   décision motivée, publication. Un véhicule ne devient visible qu'après
   validation d'un administrateur et validation de ses documents.
-- **Modèle financier acté** (A-01, A-05) : la plateforme encaisse puis
-  reverse au partenaire ; les commissions varient par partenaire, sont
-  résolues par priorité et figées sur la réservation. Vue
-  `provider_ledger` pour la trésorerie de chaque partenaire.
+- **Modèle financier acté** (A-01, A-05, A-07) : la plateforme encaisse
+  puis reverse au partenaire ; les commissions varient par partenaire,
+  sont résolues par priorité et figées sur la réservation ; **aucune TVA
+  n'est collectée**. Vue `provider_ledger` pour la trésorerie de chaque
+  partenaire.
 - Instance PostgreSQL 16.10 portable pour le développement local.
 
-**Bilan des tests : 204 au vert**
+**Bilan des tests : 207 au vert**
 
 | Suite | Volume |
 |---|---|
 | Règles métier en base (`pnpm db:test`) | 10 |
-| Commission et trésorerie (`pnpm db:commission`) | 21 |
+| Commission et trésorerie (`pnpm db:commission`) | 24 |
 | Contrats partagés (Vitest) | 102 |
 | API (Vitest) | 20 |
 | Parcours authentification (bout en bout) | 22 |
@@ -247,6 +248,9 @@ Ces règles viennent du CDC et sont appliquées par le code, pas seulement
 18. **Les fonds détenus sont ségrégués** : caution du client, solde dû au
     partenaire et commission de la plateforme sont comptabilisés
     séparément dans `provider_ledger`.
+19. **Aucune TVA n'est collectée** (A-07). L'état est explicite et
+    vérifiable — `platform.vat_registered = false`, `payout.tax_amount`
+    contrainte à zéro — et non une simple colonne manquante.
 15. **Un véhicule publié dont le tarif change repasse en validation.**
     La modification doit être revue avant de redevenir visible.
 16. **La publication est bloquée si un document obligatoire est

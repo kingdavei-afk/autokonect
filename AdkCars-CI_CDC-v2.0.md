@@ -212,12 +212,14 @@ Ne sont **pas** livrés dans la version 2 :
 
 | Point | Exigence | Statut |
 |---|---|---|
-| TVA | Taux applicable en CI | `[À CONFIRMER]` — 18 % usuel, à confirmer |
+| TVA | **Aucune collecte** — décision A-07 (§4.7) | **Cohérent si la plateforme n'est pas assujettie. À confirmer par un fiscaliste avant tout encaissement réel.** |
 | Facturation | Facture normalisée exigible | `[À CONFIRMER]` — mentions obligatoires, structure |
 | Numérotation | Séries et continuité des factures | À intégrer au module Facturation |
 | Comptabilité | Tenue des encaissements de la marketplace, reversements agences | `[À CONFIRMER]` — obligations du responsable de la plateforme |
 
-**Décision structurante [TBD — arbitrage 01] :** le modèle de flux financier (voir §4.2) détermine qui est le redevable de la TVA sur les commissions et qui facture le client final. **Cette décision doit être prise avant le développement du module Paiement.**
+**Décisions prises (A-01, A-05, A-07, 03/10/2026) :** le modèle de flux financier est arrêté (§4.2 — la plateforme encaisse puis reverse), la commission varie par partenaire (§4.4 bis) et **aucune TVA n'est collectée** (§4.7). Les conséquences comptables et fiscales sont décrites au §4.2 bis.
+
+> **Le point ouvert est fiscal, pas technique** : confirmer que la plateforme n'est pas assujettie à la TVA. Tant que ce n'est pas fait, le module Paiement ne doit pas encaisser de fonds réels.
 
 ### 3.4 Obligations de la plateforme
 
@@ -300,24 +302,21 @@ envers les partenaires ?
 
 Ce point **relève du droit et de la fiscalité, pas du développement**
 (CDCS §3.3). Il détermine :
-- le traitement TVA : la plateforme est-elle redevable sur ce qu'elle
-  encaisse avant reverse, ou seulement sur sa commission ?
 - l'obligation éventuelle d'un compte séquestre ou d'une garantie ;
-- la présentation au bilan (fonds propres ou dettes).
+- la présentation au bilan (fonds propres ou dettes) ;
+- le régime **TVA**, traité séparément au §4.7.
 
-> ⚠️ **Point non résolu à ce jour.** La migration 0002 applique l'hypothèse
-> de travail « TVA déduite du montant versé au partenaire » (`net_to_pay`
-> = solde − commission − TVA). **Si un fiscaliste établit que la TVA est
-> une charge propre de la plateforme**, ce calcul change et `net_to_pay`
-> augmente du montant de la TVA. La vue `provider_ledger` isole ce calcul
-> dans une seule colonne pour que la correction soit circonscrite a cette seule colonne.
+> **TVA** : la plateforme ne collecte pas de TVA (A-07). Ce choix n'est
+> valide que si la plateforme n'est **pas assujettie** — le détail et le
+> point de validation figurent au §4.7, qui conditionne toute collecte
+> de fonds réels.
 
 #### 3. La ségrégation des fonds est une obligation technique
 
 Le modèle B impose de pouvoir distinguer à tout instant :
 - l'argent des clients (cautions non restituées) ;
 - l'argent dû aux partenaires (solde de reversement) ;
-- l'argent de la plateforme (commissions et TVA retenues).
+- l'argent de la plateforme (commissions retenues).
 
 C'est exactement ce qu'expose la vue `provider_ledger`, créée en
 migration 0002 : `deposit_held`, `balance_due`, `commission_on_balance`,
@@ -394,6 +393,39 @@ Le taux n'est donc **pas unique**. Il se résout par ordre de priorité, puis es
 | Remboursement | Délai maximal de remboursement par canal `[TBD]` |
 | Litige | Circuit de médiation, Qui détermine l'arbitrage, délais `[TBD]` |
 | Perte de clé / de carte | `[TBD]` |
+
+### 4.7 — TVA : décision et point à valider (A-07, 03/10/2026)
+
+**Décision : la plateforme ne collecte pas de TVA.**
+
+**Conséquence sur le modèle** : aucun montant de TVA n'est calculé,
+prélevé ni restitué. Le virement au partenaire vaut le solde restant dû
+moins la commission, sans déduction fiscale.
+
+#### Ce qui reste à faire valider avant toute collecte de fonds réels
+
+« Pas de TVA » **n'est pas un choix commercial libre** : c'est une
+**conséquence juridique de la forme de la plateforme**. En Côte d'Ivoire,
+une entreprise assujettie à la TVA doit la collecter sur ses services et
+la reverser au Trésor, **même si elle ne l'affiche pas à ses clients**.
+
+| Situation | « Pas de TVA » | Action |
+|---|---|---|
+| La plateforme **n'est pas assujettie** (seuils non atteints, activité non taxable) | parfaitement cohérent | Confirmer le seuil et la nature de l'activité |
+| La plateforme **est assujettie** | **manquement**, exposé au redressement | Corriger avant d'encaisser |
+
+Le fait que la plateforme encaisse au nom des partenaires **ne change
+rien** : l'assujettissement dépend du service réellement fourni, pas du
+flux de paiement.
+
+**Tant que ce point n'est pas confirmé par un fiscaliste ou un comptable,
+le module Paiement ne doit pas encaisser de fonds réels.**
+
+**Traçabilité technique** : la migration 0003 rend cet état explicite et
+vérifiable plutôt qu'absent — `setting['platform.vat_registered'] = false`,
+et `payout.tax_amount` est contrainte à zéro, de sorte qu'une TVA ne peut
+pas être introduite par erreur. Trois tests le contrôlent.
+
 
 ---
 

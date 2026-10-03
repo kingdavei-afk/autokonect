@@ -80,7 +80,11 @@ async function main(): Promise<number> {
 
   try {
     process.stdout.write('application des migrations...\n');
-    for (const migration of ['0001_init.sql', '0002_commission-et-reversement.sql']) {
+    for (const migration of [
+    '0001_init.sql',
+    '0002_commission-et-reversement.sql',
+    '0003-suppression-tva.sql',
+  ]) {
       const applied = await run(
         [...baseArgs(), '-d', TEST_DB, '-q', '-f', `${MIGRATIONS_DIR}${migration}`],
       );

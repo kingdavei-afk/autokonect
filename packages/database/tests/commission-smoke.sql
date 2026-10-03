@@ -248,21 +248,21 @@ END
 $$;
 
 \echo ''
-\echo '--- T19 : commission et TVA calculees sur le solde du ---'
+\echo '--- T19 : commission sur le solde du, sans TVA (A-07) ---'
 DO $$
 DECLARE
   comm numeric;
-  vat numeric;
+  net numeric;
   rate numeric;
 BEGIN
-  SELECT commission_on_balance, vat_on_balance, effective_rate
-    INTO comm, vat, rate
+  SELECT commission_on_balance, net_to_pay, effective_rate
+    INTO comm, net, rate
   FROM provider_ledger
   WHERE provider_type = 'owner' AND provider_id = (
     SELECT id FROM "user" WHERE email = 'partenaire@test.ci'
   );
 
-  -- 10 000 000 encaisses, 9 % = 900 000 ; TVA 18 % sur 900 000 = 162 000.
+  -- 10 000 000 encaisses, 9 % = 900 000 de commission.
   IF rate = 0.09 THEN
     RAISE NOTICE 'OK T19a : taux partenaire 9 %% retenu';
   ELSE
@@ -275,10 +275,45 @@ BEGIN
     RAISE EXCEPTION 'ECHEC T19b : commission % au lieu de 900000', comm;
   END IF;
 
-  IF vat = 162000 THEN
-    RAISE NOTICE 'OK T19c : TVA 162 000 sur la commission';
+  -- A-07 : aucune TVA n est deduite. Le virement vaut donc
+  -- 10 000 000 - 900 000 = 9 100 000.
+  IF net = 9100000 THEN
+    RAISE NOTICE 'OK T19c : virement de 9 100 000, aucune TVA deduite';
   ELSE
-    RAISE EXCEPTION 'ECHEC T19c : TVA % au lieu de 162000', vat;
+    RAISE EXCEPTION 'ECHEC T19c : net a payer % au lieu de 9100000', net;
+  END IF;
+END
+$$;
+
+\echo '--- T19d : la TVA ne peut plus etre introduite par erreur ---'
+DO $$
+BEGIN
+  -- `payout.tax_amount` est contrainte a zero : impossible de saisir
+  -- une TVA sans changer deliberement le schema.
+  BEGIN
+    INSERT INTO payout (provider_type, owner_id, period_start, period_end,
+                        gross_amount, commission_amount, tax_amount, net_amount, status)
+    SELECT 'owner', u.id, '2027-06-01', '2027-06-02',
+           1000, 90, 16, 894, 'draft'
+    FROM "user" u WHERE u.email = 'partenaire@test.ci';
+    RAISE EXCEPTION 'ECHEC T19d : une TVA a pu etre saisie';
+  EXCEPTION WHEN check_violation THEN
+    RAISE NOTICE 'OK T19d : saisie d une TVA refusee par la base';
+  END;
+
+  IF NOT EXISTS (SELECT 1 FROM setting WHERE key = 'platform.vat_rate') THEN
+    RAISE NOTICE 'OK T19e : le taux de TVA a bien ete retire de la configuration';
+  ELSE
+    RAISE EXCEPTION 'ECHEC T19e : platform.vat_rate est toujours configure';
+  END IF;
+
+  IF EXISTS (
+    SELECT 1 FROM setting WHERE key = 'platform.vat_registered'
+      AND value = 'false'::jsonb
+  ) THEN
+    RAISE NOTICE 'OK T19f : plateforme explicitement non assujettie a la TVA';
+  ELSE
+    RAISE EXCEPTION 'ECHEC T19f : le statut fiscal de la plateforme est ambigu';
   END IF;
 END
 $$;
@@ -300,7 +335,7 @@ BEGIN
                       gross_amount, commission_amount, tax_amount, net_amount,
                       status, paid_at)
   VALUES ('owner', owner_id, '2026-12-10', '2026-12-13',
-          10000000, 900000, 162000, 8938000, 'paid', now());
+          10000000, 900000, 0, 9100000, 'paid', now());
 
   SELECT balance_due INTO after_due FROM provider_ledger
   WHERE provider_type = 'owner' AND provider_id = owner_id;
@@ -355,18 +390,13 @@ BEGIN
     RAISE EXCEPTION 'ECHEC T21b : solde % (attendu 7000000)', remaining;
   END IF;
 
-  -- 7 000 000 - 9 % - TVA 18 % sur la commission (113 400).
-  --   commission = 630 000, TVA = 113 400, net = 6 256 600
-  IF net_next = 6256600 THEN
-    RAISE NOTICE 'OK T21c : prochain virement de 6 256 600';
+  -- 7 000 000 - 9 % : commission = 630 000, virement = 6 370 000.
+  -- Aucune TVA n est prelevee (A-07).
+  IF net_next = 6370000 THEN
+    RAISE NOTICE 'OK T21c : prochain virement de 6 370 000, sans TVA';
   ELSE
-    RAISE EXCEPTION 'ECHEC T21c : net a payer % (attendu 6256600)', net_next;
+    RAISE EXCEPTION 'ECHEC T21c : net a payer % (attendu 6370000)', net_next;
   END IF;
-
-  RAISE NOTICE 'HYPOTHESE COMPTABLE : la TVA est ici DEDUITE du montant '
-    'verse au partenaire. Ce traitement doit etre confirme par un '
-    'fiscaliste (CDCS 3.3) : si la TVA est une charge propre de la '
-    'plateforme, net_to_pay vaut 6 370 000 au lieu de 6 256 600.';
 END
 $$;
 
