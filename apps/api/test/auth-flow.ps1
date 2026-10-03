@@ -5,7 +5,12 @@ $ErrorActionPreference = 'Stop'
 $Base = 'http://127.0.0.1:3000'
 
 # Numero unique par execution pour ne pas dependre d'un etat precedent
-$suffix = (Get-Random -Minimum 10000 -Maximum 99999)
+# Suffixe unique par execution : derive de l'horloge a la milliseconde.
+#
+# Un tirage aleatoire produisait des collisions entre runs successifs, et
+# le test echouait sur un EMAIL_ALREADY_USED emis par le run precedent
+# avant meme d'avoir verifie quoi que ce soit.
+$suffix = '{0:D8}' -f ([DateTime]::UtcNow.Ticks % 100000000)
 $Phone = "+2250709$suffix"
 $Email = "test.$suffix@adkcars.ci"
 $Password = 'MotDePasseSolide2026'
@@ -32,8 +37,25 @@ function Call($Method, $Path, $Body, $Headers = @{}) {
     } catch {
       $resp = $_.Exception.Response
       if ($null -eq $resp) { throw }
-      $reader = New-Object System.IO.StreamReader($resp.GetResponseStream())
-      $result = @{ Status = [int]$resp.StatusCode; Body = $reader.ReadToEnd() }
+
+      # SOURCE DU CORPS : `ErrorDetails.Message`.
+      #
+      # Sous Windows PowerShell 5.1, des que $ErrorActionPreference vaut
+      # 'Stop', le moteur d'erreur consomme et ferme le flux de reponse
+      # AVANT d'entrer dans le bloc catch : `GetResponseStream()` renvoie
+      # alors un corps vide. Lire le flux directement produirait des
+      # messages d'erreur de longueur 0, impossibles a diagnostiquer.
+      $body = $_.ErrorDetails.Message
+      if ([string]::IsNullOrWhiteSpace($body)) {
+        try {
+          $reader = New-Object System.IO.StreamReader($resp.GetResponseStream())
+          $body = $reader.ReadToEnd()
+        } catch {
+          $body = ''
+        }
+      }
+
+      $result = @{ Status = [int]$resp.StatusCode; Body = $body }
     }
 
     # Le limiteur de debit est actif et compte par IP : toutes les

@@ -36,9 +36,12 @@ mobile (CDCS §10.3, voir [ADR-001](docs/adr/ADR-001-monorepo.md)).
   nominal `Centimes`, schémas véhicule.
 - **Module véhicules** : publication, cycle de validation documentaire,
   recherche géolocalisée avec filtres et disponibilité.
+- **Back-office de validation** : file de revue, examen des documents,
+  décision motivée, publication. Un véhicule ne devient visible qu'après
+  validation d'un administrateur et validation de ses documents.
 - Instance PostgreSQL 16.10 portable pour le développement local.
 
-**Bilan des tests : 157 au vert**
+**Bilan des tests : 183 au vert**
 
 | Suite | Volume |
 |---|---|
@@ -47,6 +50,7 @@ mobile (CDCS §10.3, voir [ADR-001](docs/adr/ADR-001-monorepo.md)).
 | API (Vitest) | 20 |
 | Parcours authentification (bout en bout) | 22 |
 | Parcours véhicule (bout en bout) | 23 |
+| Back-office de validation (bout en bout) | 26 |
 
 ### Surface d'API
 
@@ -73,6 +77,10 @@ mobile (CDCS §10.3, voir [ADR-001](docs/adr/ADR-001-monorepo.md)).
 | `PATCH` | `/vehicles/:id` | propriétaire ou admin |
 | `POST` | `/vehicles/:id/documents` | propriétaire ou admin |
 | `POST` | `/vehicles/:id/submit` | propriétaire ou admin |
+| `GET` | `/admin/vehicles` | admin, file de revue |
+| `GET` | `/admin/vehicles/:id` | admin, examen |
+| `POST` | `/admin/vehicles/:id/documents/review` | admin |
+| `POST` | `/admin/vehicles/:id/decision` | admin, publier ou refuser |
 
 Toute route non listée est **protégée par défaut** : l'oubli du
 décorateur `@Public` est impossible par construction.
@@ -157,8 +165,9 @@ curl.exe http://127.0.0.1:3000/health/ready
 
 ```powershell
 # API démarrée sur :3000, base migrée
-.\apps\api\test\auth-flow.ps1     # 22 vérifications
-.\apps\api\test\vehicles-flow.ps1 # 23 vérifications
+.\apps\api\test\auth-flow.ps1      # 22 vérifications
+.\apps\api\test\vehicles-flow.ps1  # 23 vérifications
+.\apps\api\test\admin-flow.ps1     # 26 vérifications
 ```
 
 22 vérifications de bout en bout : inscription, vérification OTP,
@@ -224,6 +233,12 @@ Ces règles viennent du CDC et sont appliquées par le code, pas seulement
     validation documentaire puis par un administrateur.
 13. **Un compte qui n'est pas le propriétaire reçoit 404, pas 403** —
     répondre « interdit » confirmerait l'existence de l'annonce.
+14. **Un refus administratif est toujours motivé.** Un refus sans motif
+    est inexploitable pour le fournisseur ; le schéma l'exige (400).
+15. **Un véhicule publié dont le tarif change repasse en validation.**
+    La modification doit être revue avant de redevenir visible.
+16. **La publication est bloquée si un document obligatoire est
+    expiré**, même marqué valide en base : la date passe avant le statut.
 
 ---
 

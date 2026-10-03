@@ -52,11 +52,15 @@ function Start-Database {
   }
 
   Write-Host 'Demarrage de PostgreSQL...' -ForegroundColor Cyan
-  # Detache indispensable : un processus enfant du terminal est tue
-  # a la fermeture de celui-ci.
+  # Demarrage detache SANS redirection de flux.
+  #
+  # `Start-Process -RedirectStandardOutput` garde un handle ouvert sur le
+  # processus enfant : la commande appelante ne rend alors jamais la main
+  # et l'appelant reste bloque jusqu'a l'arret du serveur. La journalisation
+  # est assuree par `logging_collector` dans postgresql.conf.
   Start-Process -FilePath (Join-Path $PgBin 'postgres.exe') `
     -ArgumentList '-D', $PgData, '-p', $Port `
-    -WindowStyle Hidden -RedirectStandardOutput $PgLog -RedirectStandardError "$PgLog.err"
+    -WindowStyle Hidden
 
   for ($i = 0; $i -lt 60; $i++) {
     Start-Sleep -Milliseconds 500

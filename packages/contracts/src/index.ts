@@ -57,6 +57,27 @@ export {
 } from './money/cents.js';
 export type { Centimes, CurrencyCode, Money } from './money/cents.js';
 
+// ---- Revue administrative des vehicules (CDCS 7.2) -----------------------
+export {
+  reviewDecisionSchema,
+  reviewDocumentDecisionSchema,
+  reviewDocumentSchema,
+  reviewOutcomeSchema,
+  reviewQueueItemSchema,
+  reviewQueueQuerySchema,
+  vehicleReviewDetailSchema,
+  vehicleReviewStatusSchema,
+} from './admin/vehicle-review.schema.js';
+export type {
+  ReviewDecision,
+  ReviewDocument,
+  ReviewDocumentDecision,
+  ReviewOutcome,
+  ReviewQueueItem,
+  ReviewQueueQuery,
+  VehicleReviewDetail,
+} from './admin/vehicle-review.schema.js';
+
 // ---- Catalogue vehicule (CDCS 6.2, 9, 10) ---------------------------------
 export {
   buildPagination,

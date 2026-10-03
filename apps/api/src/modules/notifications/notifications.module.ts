@@ -4,6 +4,7 @@ import { APP_CONFIG, type AppConfig } from '../../common/config/config.module';
 import { StructuredLogger } from '../../common/logger/structured-logger';
 import { MockSmsProvider } from './sms/mock-sms.provider';
 import { SMS_PROVIDER } from './sms/sms.provider';
+import { NotificationsService } from './notifications.service';
 
 /** Logger deja contexte sur le canal SMS. */
 export const LOGGER_SMS = 'LoggerSms';
@@ -26,8 +27,9 @@ export const LOGGER_SMS = 'LoggerSms';
     },
     MockSmsProvider,
     { provide: SMS_PROVIDER, useExisting: MockSmsProvider },
+    NotificationsService,
   ],
-  exports: [SMS_PROVIDER, LOGGER_SMS],
+  exports: [SMS_PROVIDER, LOGGER_SMS, NotificationsService],
 })
 export class NotificationsModule implements OnModuleInit {
   constructor(
