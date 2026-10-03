@@ -123,6 +123,13 @@ export interface UserTable {
   phone_verified_at: Nullable<Timestamp>;
   last_login_at: Nullable<Timestamp>;
   last_login_ip: Nullable<string>;
+  /**
+   * Surcharge de commission propre au partenaire (A-05).
+   * NULL = appliquer le taux de la formule, puis le defaut plateforme.
+   */
+  commission_rate: Nullable<Ratio>;
+  /** Delai en jours entre l encaissement et le reverse (A-01). */
+  payout_delay_days: Generated<number>;
   created_at: CreatedAt;
   updated_at: UpdatedAt;
   deleted_at: DeletedAt;
@@ -189,8 +196,13 @@ export interface AgencyTable {
   rccm: Nullable<string>;
   /** Identifiant fiscal unique. */
   ifu: Nullable<string>;
-  plan_id: Nullable<Uuid>;
+  /**
+   * Surcharge de commission propre a l agence (A-05).
+   * NULL = appliquer le taux de la formule (via subscription).
+   */
   commission_rate: Nullable<Ratio>;
+  /** Delai en jours entre l encaissement et le reverse (A-01). */
+  payout_delay_days: Generated<number>;
   city_id: Nullable<Uuid>;
   address: Nullable<string>;
   phone: Nullable<string>;
@@ -397,8 +409,17 @@ export interface BookingTable {
   currency_code: Generated<string>;
   total_amount: MoneyInt;
   deposit_amount: MoneyInt;
-  /** Taux de commission fige pour la duree de la location (CDCS 8.5). */
+  /**
+   * Taux de commission FIGE a la creation de la reservation (CDCS 8.5).
+   * Si la formule du partenaire change apres la creation, la facture
+   * deja presentee au client ne doit pas bouger.
+   */
   commission_rate: Nullable<Ratio>;
+  /**
+   * Origine du taux fige, conservee pour rendre un litige arbitrable :
+   * `partner_override` | `plan` | `platform_default`.
+   */
+  commission_source: Nullable<string>;
   customer_notes: Nullable<string>;
   confirmed_at: Nullable<Timestamp>;
   started_at: Nullable<Timestamp>;

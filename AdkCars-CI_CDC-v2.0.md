@@ -261,6 +261,7 @@ Trois modèles possibles, impacts très différents :
 | **A — Plateforme mandataire** | La plateforme est loueur ; contrat avec le client ; sous-location à l'agence/propriétaire | Maximal : obligations assurances, TVA, restrictions sur la liquidité financière |
 | **B — Plateforme intermédiaire** | Contrat direct client ↔ fournisseur ; la plateforme prélève une commission sur le paiement | **Retenu `[TBD]`** — plus léger juridiquement, mais nécessite un PSP acceptant les paiements entre tiers |
 | **C — Modèle hybride** | Modèle B par défaut ; modèle A pour un stock de véhicules et des partenariats stratégiques | Recommandé pour P4 |
+| **B — Modèle intermédiaire** ✅ **RETENU** | **La plateforme encaisse le paiement du client, le détient, puis le reverse au fournisseur après déduction de sa commission** | **Décision A-01, 03/10/2026. Voir §4.2 bis pour les conséquences.** |
 
 **Exigences produit communes aux trois modèles [MUST] :**
 1. Séparation stricte des flux : prix du véhicule, caution, frais de service, pénalités.
@@ -268,6 +269,60 @@ Trois modèles possibles, impacts très différents :
 3. Compte d'attente (escrow) de la caution, restitution ou capture conditionnée à un état de restitution documenté.
 4. Relevé fournisseur mensuel : locations, montants, commissions, pénalités.
 5. Rapprochement automatique des paiements Mobile Money et bancaires.
+
+### 4.2 bis — Conséquences du modèle « j'encaisse et je reverse » (A-01)
+
+Le modèle B est retenu : la plateforme encaisse, détient, puis reverse.
+Trois conséquences sont **structurantes** et ne peuvent pas être traitées
+plus tard.
+
+#### 1. La trésorerie de la plateforme devient un besoin de financement
+
+Tant que le reverse n'a pas eu lieu, l'argent encaissé appartient
+au dossier mais reste chez la plateforme. Le besoin en fonds de roulement
+est proportionnel au chiffre d'affaires quotidien multiplié par le délai
+de reverse.
+
+Avec un délai de 3 jours (valeur par défaut) et 1 000 000 XOF de volume
+quotidien, la plateforme immobilise en permanence **3 000 000 XOF** de
+trésorerie, sans compter les cautions — qui sont des fonds de tiers au
+sens comptable et ne doivent pas être confondus avec les siens.
+
+**Action requise** : mesurer le volume réel en phase pilote et fixer le
+délai de reverse en conséquence. Un délai plus long améliore la
+trésorerie mais dégrade la relation partenaire.
+
+#### 2. Les fonds détenus ne sont pas des fonds propres
+
+Entre l'encaissement et le reverse, la question se pose : ces fonds
+sont-ils un produit d'exploitation de la plateforme, ou une dette
+envers les partenaires ?
+
+Ce point **relève du droit et de la fiscalité, pas du développement**
+(CDCS §3.3). Il détermine :
+- le traitement TVA : la plateforme est-elle redevable sur ce qu'elle
+  encaisse avant reverse, ou seulement sur sa commission ?
+- l'obligation éventuelle d'un compte séquestre ou d'une garantie ;
+- la présentation au bilan (fonds propres ou dettes).
+
+> ⚠️ **Point non résolu à ce jour.** La migration 0002 applique l'hypothèse
+> de travail « TVA déduite du montant versé au partenaire » (`net_to_pay`
+> = solde − commission − TVA). **Si un fiscaliste établit que la TVA est
+> une charge propre de la plateforme**, ce calcul change et `net_to_pay`
+> augmente du montant de la TVA. La vue `provider_ledger` isole ce calcul
+> dans une seule colonne pour que la correction soit circonscrite a cette seule colonne.
+
+#### 3. La ségrégation des fonds est une obligation technique
+
+Le modèle B impose de pouvoir distinguer à tout instant :
+- l'argent des clients (cautions non restituées) ;
+- l'argent dû aux partenaires (solde de reversement) ;
+- l'argent de la plateforme (commissions et TVA retenues).
+
+C'est exactement ce qu'expose la vue `provider_ledger`, créée en
+migration 0002 : `deposit_held`, `balance_due`, `commission_on_balance`,
+`vat_on_balance`, `net_to_pay`. Cette ségrégation doit être vérifiée
+par une comptabilité et confirmée par un tiers avant la mise en service.
 
 ### 4.3 Devise et change
 
@@ -292,6 +347,28 @@ Formules du CDC v1, à compléter :
 | **Enterprise** | Illimité | Illimité | Sur mesure | `[TBD]` | Sur devis |
 
 **Exigences produit [MUST]** : les plafonds de chaque formule sont **appliqués côté serveur** (API), pas seulement dans l'interface ; toute limite atteinte bloque l'action concernée avec un message explicite d'upsell.
+
+### 4.4 bis — Commission variable par partenaire ✅ **DÉCIDÉ (A-05, 03/10/2026)**
+
+« Les commissions peuvent varier selon le partenaire. »
+
+Le taux n'est donc **pas unique**. Il se résout par ordre de priorité, puis est **figé sur la réservation**.
+
+| Ordre | Source | Champ | Usage |
+|---|---|---|---|
+| 1 | Surcharge du partenaire | `agency.commission_rate` / `user.commission_rate` | Accord commercial négocié |
+| 2 | Formule d'abonnement | `plan.commission_rate` (via `subscription`) | Tranche de l'offre |
+| 3 | Défaut plateforme | `setting['platform.default_commission_rate']` | Filet de sécurité |
+
+**Règles [MUST]** :
+
+1. La surcharge du partenaire **prime même si elle est plus faible** que la formule : c'est un accord négocié, pas une erreur de saisie.
+2. Le taux effectif et son **origine** (`partner_override`, `plan`, `platform_default`) sont **figés à la création de la réservation**. Une modification de formule ultérieure ne doit pas déplacer une facture déjà présentée au client.
+3. L'origine est conservée pour qu'un litige soit arbitrable sans reconstituer l'historique des formules.
+4. Un taux négatif ou supérieur à 100 % est **refusé par la base** (contrainte SQL).
+5. `subscription` est l'unique source du taux lié à un plan. `agency.plan_id` a été supprimé en migration 0002 : deux colonnes pour la même information divergeaient, rendant le taux appliqué inexplicable.
+
+> **Valeurs de travail, non des décisions commerciales** : 12 % de commission par défaut et 18 % de TVA sont des *hypothèses* posees par la migration 0002, modifiables à chaud par l'administrateur. Elles n'ont pas vocation à devenir la grille commerciale définitive.
 
 ### 4.5 Structure tarifaire côté client
 
@@ -1433,11 +1510,11 @@ Procédures de : démarrage, sauvegarde et restauration, montée en charge, rota
 
 | # | Décision | Impact | Responsable | Échéance |
 |---|---|---|---|---|
-| **A-01** | Modèle de flux financier (mandataire / intermédiaire / hybride) | **Critique** — conditionne le module Paiement, la fiscalité, les contrats | Direction + juriste | Avant P0 |
+| ~~**A-01**~~ **RÉSOLU 03/10** | **Modèle B : la plateforme encaisse, détient, puis reverse au partenaire** (§4.2 bis) | Trésorerie, ségrégation des fonds, traitement TVA — **reste à confirmer par un fiscaliste** | **Fait** |
 | **A-02** | Prestataire de paiement de référence + opérateur Mobile Money P1 | **Critique** — conditionne le MVP | Direction | Avant P0 |
 | **A-03** | Solution de paiement carte (acquéreur local) | Élevé — F-33 | Direction | Avant P1 |
 | **A-04** | Gestion de la caution (escrow, délais, Conditions) | **Critique** — flux financier | Direction + juriste | Avant P1 |
-| **A-05** | Taux de commission et grille d'abonnements | Élevé | Direction | Avant P1 |
+| ~~**A-05**~~ **RÉSOLU 03/10** | **Commissions variables par partenaire**, résolues par priorité puis figées sur la réservation (§4.4 bis) | Grille commerciale finale et taux réels, à définir | **Fait** |
 | **A-06** | Nom de marque unique (AdkCars vs AutoKonnect) | Moyen — store, SEO | Direction | Avant P1 |
 | **A-07** | iOS en v1 ou reporté en P3 | **Élevé** — coût et délai | Direction | Avant P1 |
 | **A-08** | Langues de la v1 (FR seul ou FR+EN) | Moyen | Direction | Avant P1 |

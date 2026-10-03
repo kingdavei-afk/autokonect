@@ -23,7 +23,8 @@
     "migrate": "tsx src/cli.ts up",
     "migrate:status": "tsx src/cli.ts status",
     "migrate:reset": "tsx src/cli.ts reset",
-    "test:schema": "tsx tests/run-schema-tests.ts"
+    "test:schema": "tsx tests/run-schema-tests.ts",
+    "test:commission": "tsx tests/run-commission-tests.ts"
   },
   "dependencies": {
     "dotenv": "^16.4.7",
