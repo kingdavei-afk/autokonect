@@ -50,7 +50,7 @@ export { DATABASE } from '../common/tokens';
 
         return createDatabase({
           connectionString,
-          max: config.env === 'production' ? 20 : 10,
+          max: resolvePoolSize(config),
           debug: config.log.level === 'debug',
         });
       },
@@ -59,6 +59,40 @@ export { DATABASE } from '../common/tokens';
   exports: [DATABASE],
 })
 export class DatabaseModule {}
+
+/**
+ * Taille du pool de connexions.
+ *
+ * ------------------------------------------------------------------------
+ * LE COMPTE FAIT PARTOUT (A-18)
+ * ------------------------------------------------------------------------
+ * La limite n'est pas « par application » mais « par base ». Sur
+ * Supabase, le plan Micro autorise 60 connexions directes au total.
+ *
+ * Sur un hebergement a invocations ephemeres, chaque instance posee son
+ * PROPRE pool. Avec un pool de 20 par instance et 5 instances
+ * simultanees, la base refuse des connexions bien avant que la charge ne
+ * soit importante : le service echoue avec une erreur de pool vide, qui
+ * ressemble a une panne alors que la cause est un exces de connexions.
+ *
+ * D'ou un pool minuscule cote application : chaque instance ne traite
+ * qu'une requete a la fois de toute facon. `DATABASE_POOL_MAX` permet
+ * d'ajuster sans redemarrer quoi que ce soit.
+ */
+function resolvePoolSize(config: AppConfig): number {
+  const configured = Number(process.env['DATABASE_POOL_MAX'] ?? 0);
+
+  if (Number.isFinite(configured) && configured > 0) {
+    return Math.min(configured, 10);
+  }
+
+  // Hebergement a invocations ephemeres : pool minimal.
+  if (process.env['VERCEL'] === '1' || process.env['AWS_LAMBDA_FUNCTION_NAME']) {
+    return 1;
+  }
+
+  return config.env === 'production' ? 10 : 5;
+}
 
 /**
  * Ferme proprement le pool de connexions a l'arret.

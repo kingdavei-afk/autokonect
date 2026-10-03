@@ -2,64 +2,38 @@ import 'reflect-metadata';
 
 import { NestFactory } from '@nestjs/core';
 import type { NestExpressApplication } from '@nestjs/platform-express';
-import type { NextFunction, Request, Response } from 'express';
 
 import { AppModule } from './app.module';
-import { APP_CONFIG, type AppConfig } from './common/config/config.module';
+import { configureApp, NEST_FACTORY_OPTIONS } from './bootstrap/configure-app';
 import { bootstrapEnv } from './common/config/env.loader';
-import { AllExceptionsFilter } from './common/filters/all-exceptions.filter';
 import { StructuredLogger } from './common/logger/structured-logger';
-import { RequestContextMiddleware } from './common/middleware/request-context.middleware';
 
+/**
+ * Point d'entree serveur autonome.
+ *
+ * Utilise pour le developpement local, les tests de bout en bout et tout
+ * hebergement a processus persistant. En hebergement a invocations
+ * ephemeres (Vercel), le point d'entree est
+ * `src/bootstrap/vercel-handler.ts`, qui reutilise `configureApp` : les
+ * deux produisent exactement la meme application.
+ */
 async function bootstrap(): Promise<void> {
   // Le .env doit etre charge avant NestFactory.create : la validation
   // de la configuration s'execute a l'instanciation des modules.
   bootstrapEnv();
 
-  const app = await NestFactory.create<NestExpressApplication>(AppModule, {
-    // bufferLogs retient les journaux du framework jusqu'a l'appel de
-    // useLogger() ci-dessous. Sans cela, la sortie melange du texte ANSI
-    // et du JSON, illisible pour une collecte de logs (CDCS 11.8).
-    logger: false,
-    bufferLogs: true,
-  });
+  // `abortOnError: false` : sans lui, Nest quitte sur `process.exit(1)`
+  // sans imprimer la cause. Voir le commentaire dans configure-app.ts.
+  const app = await NestFactory.create<NestExpressApplication>(
+    AppModule,
+    NEST_FACTORY_OPTIONS,
+  );
 
-  const config = app.get<AppConfig>(APP_CONFIG);
-
-  // StructuredLogger est transient : il faut resolve() et non get().
-  const logger = (await app.resolve(StructuredLogger)).setContext('Bootstrap');
-  app.useLogger(logger);
-
-  // ---- en-tetes de securite (CDCS 11.5) ----------------------------
-  app.disable('x-powered-by');
-  app.use((_req: Request, res: Response, next: NextFunction) => {
-    res.setHeader('x-content-type-options', 'nosniff');
-    res.setHeader('referrer-policy', 'strict-origin-when-cross-origin');
-    res.setHeader('x-frame-options', 'DENY');
-    res.setHeader('permissions-policy', 'geolocation=(self), camera=()');
-    next();
-  });
-
-  // ---- identifiant de correlation -----------------------------------
-  app.use(new RequestContextMiddleware().use);
-
-  // ---- CORS explicite : jamais de joker en production ---------------
-  app.enableCors({
-    origin: config.corsOrigins,
-    credentials: true,
-    methods: ['GET', 'POST', 'PATCH', 'PUT', 'DELETE'],
-    allowedHeaders: ['content-type', 'authorization', 'x-request-id', 'idempotency-key'],
-    exposedHeaders: ['x-request-id'],
-    maxAge: 86_400,
-  });
-
-  // ---- format d'erreur unique ----------------------------------------
-  app.useGlobalFilters(await app.resolve(AllExceptionsFilter));
-
-  app.set('trust proxy', 1);
+  const config = await configureApp(app);
 
   await app.listen(config.port, '0.0.0.0');
 
+  const logger = (await app.resolve(StructuredLogger)).setContext('Bootstrap');
   logger.log('service demarre', {
     port: config.port,
     environment: config.env,
@@ -79,13 +53,16 @@ async function bootstrap(): Promise<void> {
 }
 
 bootstrap().catch((error: unknown) => {
-  const message = (error as Error).message;
+  const err = error as Error;
   process.stderr.write(
     `${JSON.stringify({
       ts: new Date().toISOString(),
       level: 'fatal',
       msg: 'demarrage impossible',
-      error: message,
+      error: err.message,
+      // La pile n'est utile qu'en developpement ; en production elle
+      // pollue les journaux sans rien ajouter au message.
+      stack: process.env['NODE_ENV'] === 'production' ? undefined : err.stack,
     })}\n`,
   );
   process.exit(1);

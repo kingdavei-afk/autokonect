@@ -29,6 +29,24 @@ function parseConnectionString(connectionString: string): PoolConfig {
   };
 }
 
+/** Port du pooler Supabase en mode transaction (A-18). */
+const SUPABASE_TRANSACTION_POOLER_PORT = 6543;
+
+/**
+ * La chaine de connexion passe-t-elle par un pooler en mode transaction ?
+ *
+ * Ce mode sert une transaction par connexion physique : les etats de
+ * session ne survivent pas d'une transaction a l'autre. C'est la
+ * contrepartie de sa resistance a la multiplication des connexions.
+ */
+export function isTransactionPooler(connectionString: string): boolean {
+  try {
+    return new URL(connectionString).port === String(SUPABASE_TRANSACTION_POOLER_PORT);
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Cree une instance Kysely.
  *
@@ -38,11 +56,22 @@ function parseConnectionString(connectionString: string): PoolConfig {
  * n'expriment pas dans leur langage natif.
  */
 export function createDatabase(options: DatabaseOptions): Db {
+  const url = parseConnectionString(options.connectionString);
+
   const pool = new Pool({
-    ...parseConnectionString(options.connectionString),
+    ...url,
     max: options.max ?? 10,
     connectionTimeoutMillis: options.connectionTimeoutMillis ?? 10_000,
     idleTimeoutMillis: options.idleTimeoutMillis ?? 30_000,
+
+    // ------------------------------------------------------------------------
+    // Hebergement a invocations ephemeres (A-18)
+    // ------------------------------------------------------------------------
+    // Sans ce drapeau, un pool contenant encore des connexions inactives
+    // maintient le processus en vie. Sur un serveur unique c'est
+    // desirable ; sur une fonction serverless, cela empeche la reclamation
+    // de l'instance et l'on paie une instance maintenue pour rien.
+    allowExitOnIdle: true,
   });
 
   // Une erreur sur une connexion inactive ne doit pas faire tomber le
@@ -56,6 +85,37 @@ export function createDatabase(options: DatabaseOptions): Db {
       }),
     );
   });
+
+  if (isTransactionPooler(options.connectionString)) {
+    // ------------------------------------------------------------------------
+    // Mode transaction : ce qui devient interdit
+    // ------------------------------------------------------------------------
+    // Le pooler rend une connexion physique apres chaque transaction,
+    // donc rien de niveau session ne survit : `SET` persists, verrous
+    // consultatifs de session, `LISTEN`, et surtout les prepared
+    // statements nommes.
+    //
+    // `node-postgres` n'utilise PAS de prepared statement nomme par
+    // defaut : il passe par le protocole etendu avec des instructions
+    // sans nom, ce qui est compatible. Le code applicatif n'en cree
+    // aucun (Kysely n'en cree pas davantage).
+    //
+    // Ce message est donc une SURVEILLANCE, pas une correction : si une
+    // dependance introduisait un jour des prepared statements nommes,
+    // l'erreur serait "`prepared statement already exists`" en
+    // production, sur une requete et non au demarrage. Ce rappel la
+    // rend visible au bon moment.
+    console.warn(
+      JSON.stringify({
+        level: 'warn',
+        msg: 'database.transaction_pooler',
+        detail:
+          'Mode transaction (port 6543) : les prepared statements nommes, ' +
+          'SET persistants et LISTEN sont indisponibles. Les migrations ' +
+          'doivent utiliser DIRECT_DATABASE_URL (port 5432).',
+      }),
+    );
+  }
 
   const config: KyselyConfig = {
     dialect: new PostgresDialect({ pool }),

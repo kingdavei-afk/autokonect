@@ -18,7 +18,13 @@ export type {
   SqlBool,
 } from 'kysely';
 
-export { createDatabase, ping, type DatabaseOptions, type Db } from './connection.js';
+export {
+  createDatabase,
+  isTransactionPooler,
+  ping,
+  type DatabaseOptions,
+  type Db,
+} from './connection.js';
 
 export {
   appliedMigrations,

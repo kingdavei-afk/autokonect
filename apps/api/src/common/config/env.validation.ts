@@ -45,8 +45,19 @@ export const envSchema = z
     DATABASE_URL: z.string().url().startsWith('postgresql://'),
     /** Role privilegie, reserve aux migrations. Ne doit pas etre utilise par l'API. */
     DIRECT_DATABASE_URL: z.string().url().startsWith('postgresql://').optional(),
+    /** Connexions par instance. Reduit a 1 en hebergement a invocations ephemeres. */
+    DATABASE_POOL_MAX: z.coerce.number().int().min(1).max(10).optional(),
 
     REDIS_URL: z.string().url().startsWith('redis://').default('redis://127.0.0.1:6379/0'),
+
+    // ---- Redis partage REST (limitation de debit) --------------------
+    // OBLIGATOIRE en production. Le stockage par defaut de
+    // `@nestjs/throttler` est une Map en memoire du processus : sur un
+    // hebergement a invocations ephemeres (Vercel), le compteur repart
+    // de zero a chaque requete et la protection annoncee n'a aucun
+    // effet. Un code OTP a six chiffres deviendrait forçable.
+    UPSTASH_REDIS_REST_URL: z.string().url().startsWith('https://').optional(),
+    UPSTASH_REDIS_REST_TOKEN: secret.optional(),
 
     // ---- Authentification (CDCS 12.2) ------------------------------
     JWT_ACCESS_SECRET: secret,
@@ -121,6 +132,26 @@ export const envSchema = z
           path: ['CORS_ORIGINS'],
           message:
             `origines non securisees interdites en production (https obligatoire) : ${insecure.join(', ')}`,
+        });
+      }
+
+      // ---- Stockage partage de la limitation de debit --------------
+      // Les deux variables vont de pair : l'une sans l'autre ne permet
+      // aucune connexion, et demarrer avec une seule masque le probleme
+      // jusqu'a la premiere requete.
+      const redisUrl = env.UPSTASH_REDIS_REST_URL;
+      const redisToken = env.UPSTASH_REDIS_REST_TOKEN;
+
+      if (!redisUrl || !redisToken) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['UPSTASH_REDIS_REST_URL'],
+          message:
+            'UPSTASH_REDIS_REST_URL et UPSTASH_REDIS_REST_TOKEN sont obligatoires ' +
+            'en production. Sans stockage partage, la limitation de debit retombe ' +
+            'sur la memoire de chaque instance : elle est reinitialisee a chaque ' +
+            'invocation, donc INEFFICACE, et le code OTP devient forcable ' +
+            '(CDCS 12.4).',
         });
       }
     }

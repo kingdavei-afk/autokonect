@@ -934,19 +934,28 @@ base_commissionnable = prix_total − TVA − caution − pénalités_reversées
                          └─────────────────┼──────────────────┘
                             ┌────────────▼─────────────┐
                             │   API REST (NestJS)      │
-                            │  + WebSocket (Socket.IO)  │
+                            │   + flux SSE              │
                             └─────┬───────┬───────┬────┘
                        ┌──────────┘       │       └──────────┐
               ┌────────▼────────┐ ┌────────▼────────┐ ┌───────▼───────┐
-              │  PostgreSQL    │ │      Redis       │ │  File d'attente │
-              │  (données)     │ │ cache + sessions │ │  (BullMQ)       │
-              └─────────────────┘ └──────────────────┘ └───────┬───────┘
+              │  PostgreSQL     │ │  Redis partagé  │ │  File d'attente │
+              │  (Supabase)     │ │  (limitation)   │ │  (déclenchée)   │
+              │  port 6543      │ │  REST, Upstash  │ │                 │
+              └─────────────────┘ └──────────────────┘ └───────┬─────────┘
                                                               │
               ┌───────────────────────────────┐   ┌───────────▼──────────┐
               │  Workers : mail, SMS, push,   │   │  Stockage objet S3/R2 │
               │  PDF, reconciliation, rappels │   │  + CDN               │
-              └───────────────────────────────┘   └──────────────────────┘
+              │  ⚠️ HORS Vercel (A-18)        │   └──────────────────────┘
+              └───────────────────────────────┘
 ```
+
+> **Deux consequences de l'hebergement a invocations ephemeres (A-18)** :
+> les **workers** (relances, rappels, reconciliation) ne peuvent pas
+> tourner sur Vercel — une fonction ne vit que le temps d'une requete.
+> Ils relevent d'un hote a processus persistant ou d'un cron declenche.
+> Et le **stockage des fichiers** ne peut pas etre le disque de la
+> fonction : il doit etre un service objet (S3/R2).
 
 ### 10.2 Stack retenue
 
@@ -956,18 +965,103 @@ base_commissionnable = prix_total − TVA − caution − pénalités_reversées
 | Mobile | **Flutter** (Android + iOS) | Un seul code pour deux stores ; excellent pour caméra, GPS, signature |
 | Back-office | **Next.js**, pas d'application séparée | ⚠️ **Divergence vs CDC v1** : 3 tableaux de bord distincts sont coûteux. Un back-office unique à rôles, internes cloisonnés |
 | Backend | **Node.js + NestJS (TypeScript)** | Structure modulaire, DI, documentation OpenAPI native |
-| Base de données | **PostgreSQL 16** | Transactions, JSONB, recherche plein texte, contraintes d'exclusion |
-| Cache / files | **Redis** (cache, sessions, rate limiting) + **BullMQ** (files d'attente) | Requis pour les rappels, l'envoi d'e-mails et la réconciliation |
+| Base de données | **PostgreSQL 16 managé par Supabase** | Transactions, JSONB, recherche plein texte, contraintes d'exclusion. Le schéma (42 tables, 27 triggers) fonctionne **inchangé** : c'est du PostgreSQL réel, pas une couche d'abstraction |
+| Cache / files | **Redis partagé via REST** (Upstash) pour la limitation de débit ; BullMQ **reporté** | ⚠️ **Changement de cible (A-18)** : une connexion TCP persistante vers Redis ne tient pas dans une fonction serverless. L'API REST est le seul mode de transport viable |
 | Recherche | **PostgreSQL FTS** en P1, **Meilisearch / Typesense** si seuil atteint | Évite un composant de plus au démarrage |
-| Stockage | **Cloudflare R2 ou S3** derrière une interface `StorageProvider` | Évite le verrouillage fournisseur |
-| Authentification | **JWT court + refresh rotation**, **OAuth2** (Google, Apple, Facebook) | Refresh rotation + révocation serveur |
-| Temps réel | **Socket.IO** avec adaptateur Redis | ⚠️ **Usage restreint** à la messagerie et au statut de réservation ; le reste passe par polling ou invalidation de cache |
+| Stockage | **Cloudflare R2 ou S3** derrière une interface `StorageProvider` | Évite le verrouillage fournisseur. **Obligatoire** : le disque d'une fonction serverless est éphémère |
+| Authentification | **JWT court + refresh rotation**, **OAuth2** (Google, Apple, Facebook) | Refresh rotation + révocation serveur. **Supabase Auth n'est pas utilisé** (A-18) : l'authentification OTP téléphone déjà construite est conservée |
+| Temps réel | **Server-Sent Events (SSE)** ⚠️ **Remplace Socket.IO (A-17)** | Voir §10.2 bis. Unidirectional, sans état, reprise native |
+| Hébergement | **Vercel** (API + web) + **Supabase** (PostgreSQL) | ⚠️ **Changement (A-18)** : impose l'absence d'état en mémoire. Voir §10.2 bis |
 | Paiement | Interface `PaymentProvider` × N implémentations | **Obligatoire** : les APIs locales ont des cycles de vie indépendants (§14.2) |
 | Signature | Signature électronique native + horodatage `[TBD]` | Évite une dépendance externe à forte contrainte |
 | PDF | Génération serveur (Puppeteer ou PDFKit) | Contrats, factures, constats |
 | Observabilité | **Sentry** + logs structurés + métriques OpenTelemetry | Requis par les NFR (§11) |
 | CI/CD | GitHub Actions → registre d'images → déploiement | Voir §15.4 |
 | IaC | **Terraform** | Reproductibilité et environments documentaires |
+
+### 10.2 bis — Hébergement à invocations éphémères (A-17, A-18, 03/10/2026)
+
+**Décision : l'API et le web sont hébergés sur Vercel ; PostgreSQL sur Supabase.**
+
+Cette décision est taken **contre une recommandation antérieure** qui
+prévoyait un hôte à processus persistant pour l'API. Elle est actée, et
+elle a des conséquences qu'il faut écrire explicitement, parce qu'elles
+se paient en production et pas avant.
+
+#### Pourquoi ce n'est pas un simple réglage d'hébergement
+
+Un hébergement à invocations éphémères impose une contrainte que rien
+dans le code ne signale de lui-même :
+
+> **Toute information conservée en mémoire entre deux requêtes est
+> perdue.** Une instance peut être détruite sans préavis, et une autre
+> prend le relais, éventuellement sur un autre continent.
+
+Tout ce qui doit survivre est donc dans PostgreSQL. Cette règle n'est
+pas une préférence : c'est la seule façon d'obtenir un comportement
+correct.
+
+#### Trois conséquences directes
+
+| Conséquence | Détail |
+|---|---|
+| **Temps réel : Socket.IO abandonné (A-17)** | Vercel supporte les WebSocket, mais plafonnés à **5 minutes** et **épinglés à une instance unique**. Socket.IO suppose un routage multi-instance : impossible. Remplacé par **SSE**, voir ci-dessous |
+| **Limitation de débit : stockage partage obligatoire** | Le stockage par défaut de `@nestjs/throttler` est une `Map` en mémoire. Sur Vercel, le compteur **repart de zéro à chaque invocation**. Une limite annoncée à « 5/min » devient infinie et le **code OTP devient forçable**. Corrigé par un Redis REST (Upstash), et l'application **refuse de démarrer** en production sans lui |
+| **Workers et fichiers : hors Vercel** | Relances, rappels et réconciliation ne peuvent pas tourner dans une fonction qui ne vit que le temps d'une requête. Le stockage des fichiers ne peut pas être le disque de la fonction, qui est éphémère |
+
+#### Pourquoi SSE plutôt que Socket.IO (A-17)
+
+| Critère | Socket.IO | SSE |
+|---|---|---|
+| Sens | bidirectionnel | serveur → client |
+| Conserve une connexion | oui, par défaut | **non**, par défaut |
+| Reconnexion | côté client | **native du navigateur** |
+| Coût d'infrastructure | serveur + adaptateur Redis | nul |
+| État serveur | en mémoire (adaptateur) | **aucun** |
+
+Tous nos cas d'usage sont des notifications **du serveur vers le client** :
+statut de réservation, message reçu, résultat de paiement. Le client parle
+à l'API par requêtes HTTP ordinaires, ce qu'il fait déjà. SSE est donc
+suffisant, et **plus robuste que Socket.IO sur un réseau instable** — ce
+qui est le cas d'usage dominant à Abidjan : la reconnexion est native du
+navigateur, alors qu'un client Socket.IO doit reconstruire lui-même sa
+connexion.
+
+Les événements sont lus depuis la table `notification` par interrogation
+périodique (5 s). C'est plus lent qu'un bus, mais correct : la source de
+vérité est la base, et **aucune notification n'est perdue**.
+
+#### Connexion à Supabase
+
+Deux chaînes distinctes, et c'est la séparation qui compte :
+
+| Variable | Cible | Usage |
+|---|---|---|
+| `DATABASE_URL` | pooler **mode transaction, port 6543** | l'application |
+| `DIRECT_DATABASE_URL` | connexion **directe, port 5432** | **les migrations uniquement** |
+
+Le mode transaction sert une transaction par connexion physique : c'est
+ce qui permet de servir plusieurs invocations simultanées sans saturer la
+base. Sa contrepartie est que **rien de niveau session ne survit** —
+`SET` persistants, verrous consultatifs de session, `LISTEN`, et prepared
+statements nommés. `node-postgres` n'en crée pas par défaut, ce qui rend
+le mode compatible ; c'est surveillé par un avertissement au démarrage.
+
+Le **quota de connexions est compté par base, pas par application**
+(60 connexions directes sur le plan Micro Supabase). Chaque instance
+Vercel pose son propre pool : le pool applicatif est donc réduit à **1**
+sur cet hébergement, sinon la base refuse des connexions alors que la
+charge reste faible — une panne dont la cause n'a rien à voir avec la
+charge.
+
+#### Ce qui reste à faire avant la production
+
+| Point | Pourquoi |
+|---|---|
+| **Redis REST à créer et facturer** | Sans lui, l'application refuse de démarrer (volontairement) |
+| **Déploiement des workers** | Rappels et réconciliation hors Vercel — hébergeur ou cron non decidés |
+| **Configuration Vercel** | Répertoire racine `apps/api`, variables d'environnement, `maxDuration` pour les flux SSE |
+| **Contrôle de la localisation des données** | §3.4 exige de savoir où les données résident ; Supabase propose plusieurs régions, le choix doit être explicite |
 
 ### 10.3 Structure du dépôt (monorepo)
 
@@ -1131,6 +1225,48 @@ base_commissionnable = prix_total − TVA − caution − pénalités_reversées
 2. **Least privilege** : permissions minimales par rôle, vérifiées côté API.
 3. **Aucune donnée sensible dans les journaux**.
 4. **Échec fermé** : en cas d'incertitude sur une autorisation, la requête est refusée.
+
+#### 12.1 bis — Le moindre privilège doit exister en SQL (A-18)
+
+Le principe 2 était **documenté mais non appliqué**. Aucune migration ne
+contenait de `GRANT` ; les tables appartenaient au rôle de migration et le
+rôle applicatif n'avait aucun droit. La séparation n'existait que parce
+que la base avait été recréée par un `DROP SCHEMA CASCADE`, opération
+qui change **silencieusement** le propriétaire du schema.
+
+Une séparation qui dépend de l'historique des opérations n'est pas une
+séparation.
+
+Le dispositif retenu, décrit au §10.2 bis :
+
+| Élément | Rôle |
+|---|---|
+| `adkcars_app` | Ensemble des droits minimaux. `NOLOGIN`, sans mot de passe, jamais connectable |
+| Compte applicatif | Membre de `adkcars_app`. N'hérite d'aucune propriété |
+| Base de données | Propriétaire du rôle de **migration**, jamais du rôle applicatif |
+| `ALTER DEFAULT PRIVILEGES` | Les migrations **suivantes** accordent automatiquement les mêmes droits |
+
+> **Pourquoi le propriétaire de la base change tout** : le propriétaire
+> d'une base est implicitement membre de `pg_database_owner`, qui possède
+> le schema `public` par défaut. Une base créée `OWNER adkcars` donne
+> donc au rôle applicatif les pleins pouvoirs sur le schema.
+
+**Vérification** : `pnpm db:privileges` exécute huit tests **avec le rôle
+applicatif**, jamais avec le rôle de migration — seul le rôle démuni peut
+constater qu'une opération est refusée. Un test de privilège exécuté en
+superuser prouverait toujours un succès.
+
+Contrat vérifié :
+
+| Opération | Attendu |
+|---|---|
+| Lire, insérer, modifier, supprimer | **autorisé** |
+| Créer une table | **refusé** |
+| Supprimer une table | **refusé** |
+| Modifier le schéma | **refusé** |
+| Lire `pg_shadow` (mots de passe des rôles) | **refusé** |
+| Se connecter avec `adkcars_app` | **impossible** |
+| Être propriétaire d'un objet | **non** |
 
 ### 12.2 Authentification
 
@@ -1558,6 +1694,9 @@ Procédures de : démarrage, sauvegarde et restauration, montée en charge, rota
 | **A-14** | Ordre d'entrée des pays de phase 2 | Moyen | Direction | Avant P4 |
 | **A-15** | Budget cible et modèle de financement | **Critique** | Direction | Avant P0 |
 | **A-16** | Formalisation juridique des agréments, assurances et protection des données | **Critique** | Direction + juriste | Avant mise en production |
+| ~~**A-17**~~ **RÉSOLU 03/10** | **Temps réel : SSE au lieu de Socket.IO** (§10.2 bis) | Perte du bidirectionnel et du routage multi-instance — compensé par une reconnexion native, plus robuste sur réseau instable | **Fait** |
+| ~~**A-18**~~ **RÉSOLU 03/10** | **Hébergement : Vercel (API + web) + Supabase (PostgreSQL)** (§10.2 bis) | ⚠️ Impose l'absence d'état en mémoire, un stockage de débit partagé obligatoire, et des workers hors Vercel. Contre la recommandation antérieure d'un hôte à processus persistant | **Fait** |
+| ~~**A-19**~~ **RÉSOLU 03/10** | **Aucune TVA collectée** (§4.7) | ⚠️ **Cohérent si la plateforme n'est pas assujettie — à confirmer par un fiscaliste avant tout encaissement réel** | **Fait** |
 
 ---
 
@@ -1633,8 +1772,8 @@ Ce tableau permet de vérifier qu'aucune exigence du document initial n'a été 
 1. ADR-001 — Monorepo et stratégie des langages
 2. ADR-002 — Back-office : application unique ou séparée (**dépend de A-09**)
 3. ADR-003 — Moteur de recherche : PostgreSQL FTS ou moteur dédié
-4. ADR-004 — Stratégie temps réel : WebSocket ou polling
-5. ADR-005 — Modèle de commission et périmètre comptable
+4. ~~ADR-004 — Stratégie temps réel : WebSocket ou polling~~ → **tranché par A-17**, voir §10.2 bis
+5. ~~ADR-005 — Modèle de commission et périmètre comptable~~ → **tranché par A-05 et A-19**, voir §4.4 bis et §4.7
 6. ADR-006 — Stratégie multi-devises et multi-pays
 7. ADR-007 — Politique de rétention et de purge des données
 8. ADR-008 — Sélection du PSP et abstraction paiement

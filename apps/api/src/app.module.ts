@@ -1,50 +1,47 @@
-import { MiddlewareConsumer, Module, type NestModule } from '@nestjs/common';
+import { Module } from '@nestjs/common';
 import { APP_GUARD } from '@nestjs/core';
-import { ThrottlerGuard, ThrottlerModule } from '@nestjs/throttler';
+import { ThrottlerGuard } from '@nestjs/throttler';
 
 import { ConfigModule } from './common/config/config.module';
 import { DatabaseModule } from './database/database.module';
 import { HealthModule } from './health/health.module';
+import { RequestContextMiddleware } from './common/middleware/request-context.middleware';
+import { ThrottlerConfigModule } from './common/throttler/throttler-config.module';
 import { AuthModule } from './modules/auth/auth.module';
 import { NotificationsModule } from './modules/notifications/notifications.module';
 import { VehiclesModule } from './modules/vehicles/vehicles.module';
 import { AdminVehiclesModule } from './modules/admin-vehicles/admin-vehicles.module';
-import { RequestContextMiddleware } from './common/middleware/request-context.middleware';
+import { RealtimeModule } from './modules/realtime/realtime.module';
 
 /**
  * Ordre d'importation : ConfigModule d'abord, car il valide
- * l'environnement et fige la configuration avant toute instanciation.
+ * l'environnement avant toute instanciation.
  *
- * `ThrottlerGuard` est enregistre AVANT le garde JWT afin que la
- * limitation de debit s'applique aussi aux routes publiques
- * d'authentification, qui sont precisement les plus exposees.
+ * `ThrottlerConfigModule` est global et porte a la fois la
+ * configuration des limites et leur stockage partage (voir le module
+ * pour pourquoi il est isole).
+ *
+ * `ThrottlerGuard` passe AVANT le garde JWT : la limitation de debit
+ * s'applique aussi aux routes publiques d'authentification, qui sont
+ * precisement les plus exposees.
  */
 @Module({
   imports: [
     ConfigModule,
-    ThrottlerModule.forRoot([
-      {
-        name: 'short',
-        ttl: Number(process.env['THROTTLE_TTL_SECONDS'] ?? 60) * 1_000,
-        limit: Number(process.env['THROTTLE_LIMIT_SHORT'] ?? 20),
-      },
-      {
-        name: 'medium',
-        ttl: Number(process.env['THROTTLE_TTL_SECONDS'] ?? 60) * 60_000,
-        limit: Number(process.env['THROTTLE_LIMIT_MEDIUM'] ?? 100),
-      },
-    ]),
+    ThrottlerConfigModule,
     DatabaseModule,
     NotificationsModule,
     AuthModule,
     VehiclesModule,
     AdminVehiclesModule,
+    RealtimeModule,
     HealthModule,
   ],
-  providers: [{ provide: APP_GUARD, useClass: ThrottlerGuard }],
+  providers: [
+    {
+      provide: APP_GUARD,
+      useClass: ThrottlerGuard,
+    },
+  ],
 })
-export class AppModule implements NestModule {
-  configure(consumer: MiddlewareConsumer): void {
-    consumer.apply(RequestContextMiddleware).forRoutes('*');
-  }
-}
+export class AppModule {}
