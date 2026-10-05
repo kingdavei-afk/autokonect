@@ -10,7 +10,9 @@ import {
 } from '@nestjs/common';
 import {
   sql,
+  type Database,
   type Db,
+  type Transaction,
   type ProviderType,
   type SqlBool,
 } from '@adkcars/database';
@@ -463,6 +465,62 @@ export class BookingService {
   }
 
   /**
+   * Depassement de restitution (CDCS 4.6, A-21).
+   *
+   * 30 minutes de grace, puis chaque heure COMMENCEE a 50 % du tarif
+   * journalier. La regle est FIGEE dans `policy_snapshot` a la creation ;
+   * la fonction de la base l'applique telle quelle.
+   *
+   * Le montant est ensuite ecrit dans `overtime_amount`, qui n'est pas
+   * recalculable. C'est ce qui le rend contestable : un montant reclamable
+   * au client qui change selon l'heure de la question ne peut pas etre
+   * conteste.
+   *
+   * Une restitution A L HEURE donne zero, ce qui est ecrit. Un zero pose
+   * vaut mieux que NULL : il distingue « pas de depassement constate » de
+   * « depassement jamais calcule », et le second doit se voir.
+   *
+   * Aucun montant n est preleve ICI. A-04 (capture de la caution) n'est
+   * pas arbitre et la caution n'est pas encaissee : le recouvrement du
+   * depassement attendra son circuit.
+   */
+  private async settleOvertime(
+    bookingId: string,
+    returnedAt: Date | null,
+    trx: Transaction<Database>,
+  ): Promise<void> {
+    const [issue] = await trx
+      .selectFrom(
+        sql<{
+          grace_minutes: number;
+          overage_hours: number;
+          daily_rate: string;
+          overage_amount: string;
+        }>`booking_overtime(${bookingId}, ${returnedAt})`.as('issue'),
+      )
+      .selectAll()
+      .execute();
+
+    // Comme pour le reglement d annulation : la fonction retourne une
+    // ligne ou leve. Le type ne le dit pas, et le code ne doit pas le
+    // presumer.
+    if (!issue) {
+      throw new ConflictException({
+        code: 'OVERTIME_UNAVAILABLE',
+        message:
+          'Le depassement de restitution n a pas pu etre calcule. Traitement manuel requis.',
+        details: { bookingId },
+      });
+    }
+
+    await trx
+      .updateTable('booking')
+      .set({ overtime_amount: issue.overage_amount })
+      .where('id', '=', bookingId)
+      .execute();
+  }
+
+  /**
    * Reglement financier d'une annulation (CDCS 4.6, A-21).
    *
    * Appele AVANT la transition, dans la meme transaction. L'ordre est
@@ -805,6 +863,22 @@ export class BookingService {
               'La reservation a ete modifiee de façon concurrente. Rechargez et reessayez.',
             details: { expectedVersion },
           });
+        }
+
+        // Le depassement de restitution est pose DANS la meme
+        // transaction, juste apres `ended_at`.
+        //
+        // `ended_at` est l ENTREE du calcul : hors transaction, un autre
+        // processus pourrait modifier la reservation entre le calcul et
+        // l ecriture, et le montant fige ne correspondrait plus a ce
+        // qu il calcule.
+        //
+        // Calcule pour les TROIS etats de fin : un depassement est un fait
+        // sur le temps, pas une consequence du statut declare. Un vehicule
+        // rendu en retard peut etre enregistre `completed` — le client qui
+        // dit « c est fini » ne decide pas du retard.
+        if (isEnding) {
+          await this.settleOvertime(row.id, endedAt, trx);
         }
 
         // Invariant 3 (CDCS 8.1) : l'audit est ecrit DANS LA MEME

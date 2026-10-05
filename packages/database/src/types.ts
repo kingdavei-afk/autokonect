@@ -452,6 +452,24 @@ export interface BookingTable {
   /** Part de la caution retenue (migration 0007). */
   forfeited_deposit_amount: Nullable<MoneyInt>;
 
+  /**
+   * Depassement de restitution, POSE UNE FOIS a la constatation
+   * (migration 0010, CDCS 4.6).
+   *
+   * 30 min de grace, puis chaque heure commencee a 50 % du tarif
+   * journalier.
+   *
+   * Fige apres constatation : un montant reclamable au client doit etre
+   * contestable, et un montant qui change selon l'heure de la question ne
+   * l'est pas. La migration 0010 pose donc le verrou qui autorise
+   * `NULL -> valeur` et refuse ensuite toute reecriture.
+   *
+   * Distinct du groupe des montants figes a la creation (devis, regle) :
+   * ceux-ci ne doivent jamais bouger, celui-ci doit pouvoir etre pose une
+   * seule fois.
+   */
+  overtime_amount: Nullable<MoneyInt>;
+
   customer_notes: Nullable<string>;
   confirmed_at: Nullable<Timestamp>;
   started_at: Nullable<Timestamp>;

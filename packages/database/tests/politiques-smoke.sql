@@ -443,4 +443,134 @@ BEGIN
 END
 $$;
 
+\echo ''
+\echo '--- T40 : les montants ont deux regimes de verrouillage differents ---'
+DO $$
+DECLARE
+  reservation_id uuid;
+  affectees int;
+BEGIN
+  SELECT id INTO reservation_id FROM booking WHERE reference = 'POL-1';
+
+  -- ------------------------------------------------------------------------
+  -- FIGE A LA CREATION : toute reecriture est refusee
+  -- ------------------------------------------------------------------------
+  -- Le devis est ce que le client a ACCEPTE. Le modifier apres coup rendrait
+  -- une facture qui ne correspond plus a ce qui lui a ete presente.
+  BEGIN
+    UPDATE booking
+       SET pricing_snapshot = pricing_snapshot
+                              || jsonb_build_object('rentalAmount', 1)
+     WHERE id = reservation_id;
+    RAISE EXCEPTION 'ECHEC T40 : le devis fige a ete reecrit';
+  EXCEPTION WHEN check_violation THEN
+    RAISE NOTICE 'OK T40 : devis fige a la creation — reecriture refusee';
+  END;
+
+  BEGIN
+    UPDATE booking SET total_amount = total_amount + 1 WHERE id = reservation_id;
+    RAISE EXCEPTION 'ECHEC T40bis : le total fige a ete reecrit';
+  EXCEPTION WHEN check_violation THEN
+    RAISE NOTICE 'OK T40bis : total fige — reecriture refusee';
+  END;
+
+  ------------------------------------------------------------------------
+  -- POSE UNE FOIS : la premiere ecriture passe, la reecriture est refusee
+  ------------------------------------------------------------------------
+  -- La sanction et le depassement sont poses A LA CONSTATATION. Les mettre
+  -- dans la meme liste que le devis les rendait impossibles a enregistrer :
+  -- `NULL` et `30000` sont differents, donc le verrou refusait la premiere
+  -- ecriture comme une reecriture.
+  --
+  -- Le produit aurait semble fonctionner en ecrivant ailleurs — ce qui est
+  -- PIRE que de ne pas verrouiller, parce que le defaut devient invisible.
+  BEGIN
+    UPDATE booking SET overtime_amount = 30000 WHERE id = reservation_id;
+
+    GET DIAGNOSTICS affectees = ROW_COUNT;
+
+    IF affectees <> 1 THEN
+      RAISE EXCEPTION 'ECHEC T40ter : premiere ecriture du depassement refusee (% ligne)', affectees;
+    END IF;
+
+    RAISE NOTICE 'OK T40ter : premiere constatation du depassement acceptee';
+  END;
+
+  -- Reecrire la meme valeur : sans effet, donc acceptee. C est ce qui rend
+  -- le calcul REJOUABLE sans changer de montant.
+  BEGIN
+    UPDATE booking SET overtime_amount = 30000 WHERE id = reservation_id;
+    RAISE NOTICE 'OK T40quater : reecriture de la MEME valeur acceptee — le calcul reste rejouable';
+  END;
+
+  BEGIN
+    UPDATE booking SET overtime_amount = 60000 WHERE id = reservation_id;
+    RAISE EXCEPTION 'ECHEC T40quinquies : un depassement constate a ete reecrit';
+  EXCEPTION WHEN check_violation THEN
+    RAISE NOTICE 'OK T40quinquies : reecriture du depassement refusee — une sanction prononcee reste prononcee';
+  END;
+
+  -- ------------------------------------------------------------------------
+  -- Un verrou trop large paralyserait le produit
+  -- ------------------------------------------------------------------------
+  BEGIN
+    UPDATE booking SET customer_notes = 'Note ajoutee apres coup'
+     WHERE id = reservation_id;
+
+    GET DIAGNOSTICS affectees = ROW_COUNT;
+
+    IF affectees <> 1 THEN
+      RAISE EXCEPTION 'ECHEC T40sexies : le verrou bloque aussi les champs libres';
+    END IF;
+
+    RAISE NOTICE 'OK T40sexies : les champs non figes restent modifiables';
+  END;
+END
+$$;
+
+\echo ''
+\echo '--- T41 : le depassement est borne et exige un tarif ---'
+DO $$
+DECLARE
+  reservation_id uuid;
+BEGIN
+  SELECT id INTO reservation_id FROM booking WHERE reference = 'POL-1';
+
+  -- Un depassement NEGATIF signifierait que la voiture a ete rendue en
+  -- avance. Ce n est pas un depassement, et son montant serait sans sens.
+  BEGIN
+    UPDATE booking SET overtime_amount = -1 WHERE id = reservation_id;
+    RAISE EXCEPTION 'ECHEC T41 : un depassement negatif a ete accepte';
+  EXCEPTION WHEN check_violation THEN
+    RAISE NOTICE 'OK T41 : depassement negatif refuse';
+  END;
+
+  -- Au-dela de dix fois le tarif journalier, la voiture n a pas ete rendue
+  -- en retard : elle a ete RETENUE. Cela demande un arbitrage humain, et un
+  -- calcul automatique y donnerait une fausse precision.
+  BEGIN
+    UPDATE booking SET overtime_amount = 900000 WHERE id = reservation_id;
+    RAISE EXCEPTION 'ECHEC T41bis : un depassement implausible a ete accepte';
+  EXCEPTION WHEN check_violation THEN
+    RAISE NOTICE 'OK T41bis : depassement au-dela de dix fois le tarif refuse (arbitrage requis)';
+  END;
+
+  -- Les deux refus n'ont rien MODIFIE. La valeur reste celle constatee
+  -- par T40ter — pas NULL, qui serait une absence de montant et non une
+  -- absence de modification.
+  DECLARE restant bigint;
+  BEGIN
+    SELECT overtime_amount INTO restant FROM booking WHERE id = reservation_id;
+
+    IF restant IS DISTINCT FROM 30000 THEN
+      RAISE EXCEPTION
+        'ECHEC T41ter : le depassement a change apres deux refus (attendu 30000, obtenu %)',
+        restant;
+    END IF;
+  END;
+
+  RAISE NOTICE 'OK T41ter : les refus n ont rien modifie — le montant constate reste constate';
+END
+$$;
+
 ROLLBACK;

@@ -52,12 +52,12 @@ mobile (CDCS §10.3, voir [ADR-001](docs/adr/ADR-001-monorepo.md)).
   (`booking_financial_outcome`, `booking_overtime`).
 - Instance PostgreSQL 16.10 portable pour le développement local.
 
-**Bilan des tests : 463 au vert**
+**Bilan des tests : 482 au vert**
 
 | Suite | Volume |
 |---|---|
 | Règles métier en base (`pnpm db:test`) | 11 |
-| Commission, paiements directs et politiques financières (`pnpm db:commission`) | 52 |
+| Commission, paiements directs, politiques financières et machine à états du paiement (`pnpm db:commission`) | 76 |
 | Privilèges du rôle applicatif (`pnpm db:privileges`) | 8 |
 | Contrats partagés (Vitest) | 153 |
 | API (Vitest) | 33 |
@@ -66,19 +66,46 @@ mobile (CDCS §10.3, voir [ADR-001](docs/adr/ADR-001-monorepo.md)).
 | Back-office de validation (bout en bout) | 26 |
 | Flux temps réel SSE (bout en bout) | 17 |
 | Réservation (bout en bout) | 56 |
-| **Paiement (bout en bout)** | **47** |
+| **Paiement (bout en bout)** | **57** |
 
 ### Surfaces
 
 | Application | Pile | Port local | URL |
 |---|---|---|---|
 | Site + back-office | Next.js 15, App Router | 3001 | http://localhost:3001 |
-| API | NestJS | 3000 | http://localhost:3000 |
-| Base | PostgreSQL 16 portable | 5432 | — |
+| API | NestJS | 3000 (`PORT`) | http://localhost:3000 |
+| Base | PostgreSQL 16 portable | 5432 | - |
 
 Le navigateur ne parle **jamais** à l'API : tout passe par des
 gestionnaires de routes Next, et les jetons vivent dans des cookies
 `httpOnly`. Voir la règle 26.
+
+#### Le port de l'API
+
+L'API lit `PORT` dans `.env`. Si ce port est déjà pris, elle ne démarre
+pas, et le message ne dit pas *qui* le détient. Les six parcours de bout
+en bout résolvent le port dans cet ordre :
+
+1. `ADKCARS_PORT` — une CI peut imposer un port sans toucher au dépôt ;
+2. `PORT` — déjà exporté par la CI ;
+3. `PORT` dans `.env` — **la même source que `scripts\dev-api.ps1`** ;
+4. `3000` — valeur du produit, dans `.env.example`.
+
+`.env` passe avant le défaut parce que c'est la configuration locale
+réelle : si le fichier dit `3002`, le service est sur `3002`, et le deviner
+autrement serait faux par construction. Une configuration a **une** source
+— le lanceur et les tests lisent le même fichier.
+
+> Un port fixe dans un test produit un symptôme trompeur. Un autre projet
+> occupait `3000` : les tests ont tous échoué sur `404 Not Found` en
+> `/health`. Un 404 désigne un service qui répond — ici, c'en était un
+> autre, et l'erreur ne distinguait pas « l'API est cassée » de « l'API
+> n'a pas démarré ».
+
+> `.\scripts\dev-api.ps1 -Stop` identifie le processus **par le port
+> courant**. Après un changement de `PORT`, il ne trouve plus l'ancien
+> processus et l'API reste en écoute sur l'ancien port. Arrêter alors le
+> processus Node dont la ligne de commande contient `dist\main.js`.
 
 ## Surface d'API
 
@@ -172,12 +199,13 @@ Copy-Item .env.example .env
 pnpm db:migrate
 
 # 4. API
-pnpm dev:api          # http://localhost:3000
+pnpm dev:api          # http://localhost:$(PORT)  -- voir « Le port de l'API »
 ```
 
 Vérification :
 
 ```powershell
+# Le port vient de .env ; 3000 est la valeur par defaut du produit.
 curl.exe http://127.0.0.1:3000/health/live
 curl.exe http://127.0.0.1:3000/health/ready
 ```
@@ -196,7 +224,7 @@ curl.exe http://127.0.0.1:3000/health/ready
 | `pnpm db:migrate:status` | État des migrations |
 | `pnpm db:reset` | Recrée le schéma (développement uniquement) |
 | `pnpm db:test` | **11 tests de règles métier sur base réelle** |
-| `pnpm db:commission` | **52 tests : commission (23), paiements directs (9), politiques financières (20)** |
+| `pnpm db:commission` | **76 tests : commission (23), paiements directs (9), politiques financières (29), machine à états du paiement (15)** |
 | `pnpm db:privileges` | **8 tests du contrat de privilèges (CDCS 12.1)** |
 | `.\scripts\dev-api.ps1` | Démarre l'API en arrière-plan, journaux exploitables |
 | `.\scripts\dev-api.ps1 -Stop` | Arrête l'API démarrée par le script |
@@ -213,8 +241,11 @@ pnpm build
 .\apps\api\test\admin-flow.ps1     # 26 vérifications
 .\apps\api\test\realtime-flow.ps1  # 17 vérifications
 .\apps\api\test\booking-flow.ps1   # 56 vérifications
-.\apps\api\test\payment-flow.py     # 47 vérifications
+.\apps\api\test\payment-flow.py    # 57 vérifications
 ```
+
+Les six résolvent le port de l'API comme indiqué plus haut : aucune
+variable n'est nécessaire en développement.
 
 Ces tests lisent le code OTP dans `apps\api\api.err.log`, écrit par le
 fournisseur SMS simulé. Ils supposent donc que l'API a été démarrée par

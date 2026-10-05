@@ -21,7 +21,30 @@
 #      sans trace est inexpliquable en cas de litige.
 
 $ErrorActionPreference = 'Continue'
-$Base = 'http://127.0.0.1:3000'
+# Port de l'API, resolu dans cet ordre :
+#
+#   $env:ADKCARS_PORT   une CI peut imposer un port sans toucher au depot
+#   $env:PORT           deja exporte par la CI
+#   PORT dans .env      la MEME source que scripts/dev-api.ps1
+#   3000                valeur du produit, dans .env.example
+#
+# `.env` passe avant le defaut parce que c'est la configuration locale
+# reelle : si le fichier dit 3001, le service est sur 3001, et le deviner
+# autrement serait faux par construction. Une configuration a UNE source.
+$FichierEnv = Join-Path (Join-Path (Join-Path $PSScriptRoot '..') '..') '..'
+$FichierEnv = Join-Path $FichierEnv '.env'
+$PortDepuisEnv = if (Test-Path $FichierEnv) {
+    $ligne = Get-Content $FichierEnv |
+             Where-Object { $_ -match '^\s*PORT=' } |
+             Select-Object -First 1
+    if ($ligne -match '=(\d+)') { $Matches[1] }
+}
+
+$PortApi = if ($env:ADKCARS_PORT) { $env:ADKCARS_PORT }
+           elseif ($env:PORT)     { $env:PORT }
+           elseif ($PortDepuisEnv) { $PortDepuisEnv }
+           else                   { '3000' }
+$Base = "http://127.0.0.1:$PortApi"
 
 $suffix = '{0:D8}' -f ([DateTime]::UtcNow.Ticks % 100000000)
 
@@ -115,7 +138,8 @@ function Auth($u) { return @{ Authorization = "Bearer $($u.Token)" } }
 #
 # ⚠️ Cette variable ne doit PAS s'appeler `$base`. PowerShell ignore la
 # casse des noms de variables : `$base = (Get-Date)...` ecrase
-# `$Base = 'http://127.0.0.1:3000'`, et la premiere requete part alors
+# Un port en dur produit un symptome trompeur, note ci-dessus. Le
+# port se lit maintenant dans l'environnement.
 # vers « 10/10/2026 ... POST/auth/register ». L'erreur est un refus de
 # connexion, sans aucun rapport avec la reservation — ce qui la rend
 # très difficile à relier à sa cause.

@@ -16,6 +16,22 @@ export type {
   ExtractTypeFromReferenceExpression,
   Selectable,
   SqlBool,
+  /**
+   * Transaction Kysely.
+   *
+   * Exportee pour que l'API puisse typer le `trx` d'une methode interne :
+   * Kysely l'infere quand la fonction est appelee en ligne, mais pas pour
+   * une methode appelee ailleurs.
+   *
+   * Importer depuis `kysely` directement ferait dependre l'API du
+   * CONSTRUCTEUR plutot que du paquet qui l'encapsule — le jour ou ce
+   * paquet isole Kysely, l'API devrait etre modifiee.
+   *
+   * `any` serait l'autre solution, et elle est mauvaise : une transaction
+   * dont le type est faux produit une erreur a l'EXPLOITATION, en
+   * production, sur une ecriture qu'on croyait verifiee.
+   */
+  Transaction,
 } from 'kysely';
 
 export {

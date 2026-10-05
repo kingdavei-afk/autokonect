@@ -107,15 +107,17 @@ async function main(): Promise<number> {
   try {
     process.stdout.write('application des migrations...\n');
     for (const migration of [
-    '0001_init.sql',
-    '0002_commission-et-reversement.sql',
-    '0003-suppression-tva.sql',
-    '0004-privileges-application.sql',
-    '0005-paiements-directs-et-creances.sql',
-    '0006-donnees-reference.sql',
-  '0007-politiques-financieres.sql',
-  '0008-machine-etats-paiement.sql',
-  ]) {
+      '0001_init.sql',
+      '0002_commission-et-reversement.sql',
+      '0003-suppression-tva.sql',
+      '0004-privileges-application.sql',
+      '0005-paiements-directs-et-creances.sql',
+      '0006-donnees-reference.sql',
+      '0007-politiques-financieres.sql',
+      '0008-machine-etats-paiement.sql',
+      '0009-remboursement-borne.sql',
+      '0010-depassement-restitution.sql',
+    ]) {
       const applied = await run(
         [...baseArgs(), '-d', TEST_DB, '-q', '-f', `${MIGRATIONS_DIR}${migration}`],
       );

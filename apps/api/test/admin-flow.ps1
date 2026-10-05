@@ -8,7 +8,31 @@
 param()
 
 $ErrorActionPreference = 'Stop'
-$Base = 'http://127.0.0.1:3000'
+
+# Port de l'API, resolu dans cet ordre :
+#
+#   $env:ADKCARS_PORT   une CI peut imposer un port sans toucher au depot
+#   $env:PORT           deja exporte par la CI
+#   PORT dans .env      la MEME source que scripts/dev-api.ps1
+#   3000                valeur du produit, dans .env.example
+#
+# `.env` passe avant le defaut parce que c'est la configuration locale
+# reelle : si le fichier dit 3001, le service est sur 3001, et le deviner
+# autrement serait faux par construction. Une configuration a UNE source.
+$FichierEnv = Join-Path (Join-Path (Join-Path $PSScriptRoot '..') '..') '..'
+$FichierEnv = Join-Path $FichierEnv '.env'
+$PortDepuisEnv = if (Test-Path $FichierEnv) {
+    $ligne = Get-Content $FichierEnv |
+             Where-Object { $_ -match '^\s*PORT=' } |
+             Select-Object -First 1
+    if ($ligne -match '=(\d+)') { $Matches[1] }
+}
+
+$PortApi = if ($env:ADKCARS_PORT) { $env:ADKCARS_PORT }
+           elseif ($env:PORT)     { $env:PORT }
+           elseif ($PortDepuisEnv) { $PortDepuisEnv }
+           else                   { '3000' }
+$Base = "http://127.0.0.1:$PortApi"
 $psql = 'E:\ADKauto\.tools\pgsql\pgsql\bin\psql.exe'
 $env:PGPASSWORD = 'adkcars_dev'
 

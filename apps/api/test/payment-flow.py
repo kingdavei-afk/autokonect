@@ -13,7 +13,39 @@ import io, json, os, re, subprocess, sys, time, urllib.error, urllib.request
 
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
-API = "http://127.0.0.1:3000"
+# Port de l'API, resolu dans cet ordre :
+#
+#   ADKCARS_PORT   une CI peut imposer un port sans toucher au depot
+#   PORT           deja exporte par la CI
+#   PORT dans .env la meme source que scripts/dev-api.ps1
+#   3000           valeur du produit, dans .env.example
+#
+# La premiere version lisait la variable d'environnement, puis 3000. Le
+# lanceur, lui, lisait .env. En developpement ou rien n'est exporte,
+# l'API demarrait sur le port de .env et le parcours interrogeait 3000 :
+# il echouait sur le defaut que la correction visait a lever.
+#
+# Une configuration a UNE source. C'est le meme fichier que le lanceur.
+def _port_depuis_env():
+    chemin = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                          "..", "..", "..", ".env")
+    try:
+        for ligne in io.open(chemin, encoding="utf-8"):
+            m = re.match(r"^\s*PORT=(\d+)", ligne)
+            if m:
+                return int(m.group(1))
+    except OSError:
+        pass
+    return None
+
+
+PORT = (
+    int(os.environ["ADKCARS_PORT"]) if os.environ.get("ADKCARS_PORT")
+    else int(os.environ["PORT"]) if os.environ.get("PORT")
+    else _port_depuis_env() or 3000
+)
+API = "http://127.0.0.1:%d" % PORT
+API_LOG = r"E:\ADKauto\apps\api\api.err.log"
 API_LOG = r"E:\ADKauto\apps\api\api.err.log"
 PSQL = r"E:\ADKauto\.tools\pgsql\pgsql\bin\psql.exe"
 
@@ -68,36 +100,75 @@ def sql(requete):
     return (p.stdout or "").strip()
 
 
+# Nombre de tentatives consommees par la limitation de debit.
+#
+# Le parcours cree huit reservations, huit intentions et une douzaine de
+# notifications, le tout depuis une seule adresse IP : la limitation
+# S APPLIQUE. C est son role.
+#
+# Retenter plutot que relever la limite : relever le seuil dans un
+# environnement de test semble raisonnable, et cela retire toute la
+# couverture de la limitation — une regression qui la rendrait trop
+# permissive en production ne serait plus detectee.
+tentatives_429 = 0
+
+
 def appeler(method, chemin, corps=None, jeton=None, signature=None, brut=None):
-    """Appel HTTP. `brut` permet d'envoyer des octets non re-serialises."""
-    url = API + chemin
-    donnees = None
+    """
+    Appel HTTP, avec nouvelle tentative sur limitation de debit.
 
-    if brut is not None:
-        donnees = brut if isinstance(brut, bytes) else brut.encode("utf-8")
-    elif corps is not None:
-        donnees = json.dumps(corps).encode("utf-8")
+    `brut` permet d'envoyer des octets non re-serialises : c'est
+    indispensable pour le webhook, dont la signature porte sur les octets
+    recus.
 
-    requete = urllib.request.Request(url, data=donnees, method=method)
-    requete.add_header("accept", "application/json")
+    Trois essais, 2 s puis 4 s. Assez court pour ne pas masquer un defaut :
+    si un endpoint reste sature, l'echec doit etre remonte, pas passe
+    sous une dizaine de secondes d'attente.
+    """
+    global tentatives_429
 
-    if donnees is not None:
-        requete.add_header("content-type", "application/json")
-    if jeton:
-        requete.add_header("authorization", "Bearer " + jeton)
-    if signature:
-        requete.add_header("x-adkcars-signature", signature)
+    delais = (0, 2, 4)
 
-    try:
-        with urllib.request.urlopen(requete, timeout=25) as reponse:
-            texte = reponse.read().decode()
-            return reponse.status, (json.loads(texte) if texte else {})
-    except urllib.error.HTTPError as e:
-        texte = e.read().decode()
+    for essai, delai in enumerate(delais):
+        if delai:
+            time.sleep(delai)
+
+        url = API + chemin
+        donnees = None
+
+        if brut is not None:
+            donnees = brut if isinstance(brut, bytes) else brut.encode("utf-8")
+        elif corps is not None:
+            donnees = json.dumps(corps).encode("utf-8")
+
+        requete = urllib.request.Request(url, data=donnees, method=method)
+        requete.add_header("accept", "application/json")
+
+        if donnees is not None:
+            requete.add_header("content-type", "application/json")
+        if jeton:
+            requete.add_header("authorization", "Bearer " + jeton)
+        if signature:
+            requete.add_header("x-adkcars-signature", signature)
+
         try:
-            return e.code, json.loads(texte or "{}")
-        except json.JSONDecodeError:
-            return e.code, {"message": texte[:300]}
+            with urllib.request.urlopen(requete, timeout=25) as reponse:
+                texte = reponse.read().decode()
+                return reponse.status, (json.loads(texte) if texte else {})
+        except urllib.error.HTTPError as e:
+            texte = e.read().decode()
+
+            if e.code == 429 and essai < len(delais) - 1:
+                tentatives_429 += 1
+                continue
+
+            try:
+                return e.code, json.loads(texte or "{}")
+            except json.JSONDecodeError:
+                return e.code, {"message": texte[:300]}
+
+    # Injoignable : les trois essais ont rendu 429. On rend le dernier.
+    return 429, {"message": "limitation de debit : trois tentatives epuisees"}
 
 
 def dernier_code(telephone):
@@ -681,8 +752,177 @@ def main():
              sql("SELECT count(*) FROM refund r WHERE r.booking_id IS NULL;") == "0"
              or True,
              "les remboursements sans paiement sont absents par construction")
+
+    # ------------------------------------------------------------------
+    # 12. Le depassement de restitution (CDCS 4.6, A-21)
     # ------------------------------------------------------------------
     dire("")
+    dire("=== 12. depassement de restitution ===")
+
+    base_restitution = time.time() + 80 * 86_400
+    fin_restitution = base_restitution + 3 * 86_400
+
+    st, r7 = appeler("POST", "/bookings", {
+        "vehicleId": vehicule,
+        "startAt": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(base_restitution)),
+        "endAt": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(fin_restitution)),
+        "isOneWay": False,
+    }, jeton=client["token"])
+    assert st == 201, f"reservation 7 : {st} {r7.get('message')}"
+    reservation7 = r7["id"]
+
+    st, p7 = appeler("POST", "/payments/intents",
+                     {"bookingId": reservation7, "method": "card"},
+                     jeton=client["token"])
+    assert st == 201, f"intention 7 : {st} {p7.get('message')}"
+
+    charge7 = notification(p7["externalRef"], "paid", montant="180000",
+                           identifiant=f"evt-e2e-7-{SUFFIXE}")
+    st, _ = appeler("POST", "/payments/webhook/simulator", brut=charge7,
+                    signature=signer(charge7))
+    verifier("reservation 7 payee", st == 200, f"statut {st}")
+
+    # ---- Restitution dans la tolerance ----------------------------
+    dire("")
+    dire("=== 13. restitution dans la tolerance de 30 min ===")
+
+    # Le calcul se fait sur l heure de fin de location, pas sur l heure
+    # reelle. Pour rendre la voiture APRES la fin prevue, la fin de
+    # location doit etre depassee — donc la reservation doit COMMENCER
+    # dans moins de 30 minutes pour etre finie dans moins de 30 minutes
+    # apres sa fin.
+    #
+    # Poser `ended_at` directement serait plus simple, mais ce serait
+    # ecrire dans une reservation au lieu de passer par la transition :
+    # le test ne verifierait alors pas le chemin que le produit utilise.
+    tolerance = 20 * 60  # 20 minutes, dans la tolerance de 30
+
+    sql("UPDATE vehicle SET daily_rate = 60000 WHERE id = '%s';" % vehicule)
+
+    version7 = sql("SELECT version FROM booking WHERE id='%s';" % reservation7)
+
+    # La transition pose `ended_at = now()`. Pour simuler une restitution
+    # dans la tolerance, la fin de location doit etre toute proche : on
+    # la rapproche sur la reservation, ce qui est une DECLARATION de
+    # planning, pas une ecriture de regle.
+    sql("UPDATE booking SET end_at = now() + interval '10 minutes' "
+        "WHERE id = '%s';" % reservation7)
+
+    # `paid -> completed` est refuse : un vehicule ne peut pas etre rendu
+    # sans avoir ete pris en charge. La prise en charge est ce qui constate
+    # le depart et declenche la location ; la sauter permettrait de cloturer une
+    # location dont l execution n a pas commence.
+    version7 = sql("SELECT version FROM booking WHERE id='" + reservation7 + "';")
+
+    st, r = appeler("POST", f"/bookings/{reservation7}/transitions", {
+        "to": "in_progress", "expectedVersion": int(version7),
+    }, jeton=client["token"])
+    verifier("reservation 7 prise en charge", st in (200, 204),
+             f"statut {st} — {r.get('code', '')} {r.get('message', '')}".strip())
+
+    version7 = sql("SELECT version FROM booking WHERE id='" + reservation7 + "';")
+    st, r = appeler("POST", f"/bookings/{reservation7}/transitions", {
+        "to": "completed", "expectedVersion": int(version7),
+    }, jeton=client["token"])
+
+    verifier("reservation 7 terminee", st in (200, 204),
+             f"statut {st} — {r.get('code', '')} {r.get('message', '')}".strip())
+
+    depassement7 = sql(
+        "SELECT overtime_amount FROM booking WHERE id='" + reservation7 + "';"
+    )
+
+    # Un zero pose vaut mieux que NULL : il distingue « pas de depassement
+    # constate » de « depassement jamais calcule », et le second doit se voir.
+    verifier("depassement calcule et nul dans la tolerance",
+             depassement7 == "0",
+             f"overtime_amount={depassement7} (attendu 0, pas NULL)")
+
+    # ---- Depassement reellement constate --------------------------
+    dire("")
+    dire("=== 14. depassement hors tolerance ===")
+
+    # La reservation est creee avec des dates DEJA PASSEES : terminee il y
+    # a une heure et demie.
+    #
+    # Une premiere version la creait dans 100 jours puis repoussait `end_at`
+    # apres coup. La base l a refuse — `booking_range_valid` impose
+    # `end_at > start_at`, et modifier `end_at` seul produit l inverse.
+    #
+    # Le defaut etait plus profond : corriger le planning APRES COUP pour
+    # qu il convienne teste moins bien que de le creer correctement.
+    fin_ht = time.time() - 91 * 60
+    debut_ht = fin_ht - 3 * 86_400
+
+    st, r8 = appeler("POST", "/bookings", {
+        "vehicleId": vehicule,
+        "startAt": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(debut_ht)),
+        "endAt": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(fin_ht)),
+        "isOneWay": False,
+    }, jeton=client["token"])
+    assert st == 201, f"reservation 8 : {st} {r8.get('message')} {r8.get('code', '')}"
+    reservation8 = r8["id"]
+
+    st, p8 = appeler("POST", "/payments/intents",
+                     {"bookingId": reservation8, "method": "card"},
+                     jeton=client["token"])
+    assert st == 201, f"intention 8 : {st}"
+
+    charge8 = notification(p8["externalRef"], "paid", montant="180000",
+                           identifiant=f"evt-e2e-8-{SUFFIXE}")
+    st, _ = appeler("POST", "/payments/webhook/simulator", brut=charge8,
+                    signature=signer(charge8))
+    verifier("reservation 8 payee", st == 200, f"statut {st}")
+
+    # La fin de location est deja depassee de 1 h 31 : apres la tolerance
+    # de 30 min, cela fait 1 h 01 de depassement billable, donc 2 heures
+    # commencees, soit 2 x 30 000 = 60 000.
+    #
+    # `paid -> completed` reste refuse : il faut la prise en charge, qui
+    # constate le depart. Sans elle, on pourrait cloturer une location dont
+    # l execution n a pas commence.
+    version8 = sql("SELECT version FROM booking WHERE id='" + reservation8 + "';")
+    st, r = appeler("POST", f"/bookings/{reservation8}/transitions", {
+        "to": "in_progress", "expectedVersion": int(version8),
+    }, jeton=client["token"])
+    verifier("reservation 8 prise en charge", st in (200, 204),
+             f"statut {st} — {r.get('code', '')} {r.get('message', '')}".strip())
+
+    version8 = sql("SELECT version FROM booking WHERE id='" + reservation8 + "';")
+    st, r = appeler("POST", f"/bookings/{reservation8}/transitions", {
+        "to": "completed", "expectedVersion": int(version8),
+    }, jeton=client["token"])
+
+    verifier("reservation 8 terminee", st in (200, 204),
+             f"statut {st} — {r.get('code', '')} {r.get('message', '')}".strip())
+
+    depassement8 = sql(
+        "SELECT overtime_amount FROM booking WHERE id='" + reservation8 + "';"
+    )
+
+    verifier("depassement = heures commencees apres la tolerance",
+             depassement8 == "60000",
+             f"overtime_amount={depassement8} (attendu 60000)")
+
+    # ---- Le depassement est FIGE ----------------------------------
+    # Une sanction prononcee doit rester celle qui a ete prononcee.
+    resultat = sql(
+        "UPDATE booking SET overtime_amount = 1 WHERE id='" + reservation8 + "';"
+    )
+    verifier("depassement constate non reecrivable",
+             "deja ete constate" in resultat,
+             resultat[:120] or "la reecriture a abouti")
+
+    verifier("depassement inchange apres tentative",
+             sql("SELECT overtime_amount FROM booking WHERE id='" + reservation8 + "';")
+             == "60000")
+
+    # ------------------------------------------------------------------
+    dire("")
+    if tentatives_429:
+        dire(f"  note : {tentatives_429} limitation(s) de debit rencontree(s), "
+             "reprise apres recul progressif")
+
     dire(f"RESULTAT : {reussis} reussis, {echecs} echecs sur {reussis + echecs}")
     return 0 if echecs == 0 else 1
 

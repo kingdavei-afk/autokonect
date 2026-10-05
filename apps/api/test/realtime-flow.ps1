@@ -11,7 +11,31 @@
 # simple lecture de table.
 
 $ErrorActionPreference = 'Continue'
-$Base = 'http://127.0.0.1:3000'
+
+# Port de l'API, resolu dans cet ordre :
+#
+#   $env:ADKCARS_PORT   une CI peut imposer un port sans toucher au depot
+#   $env:PORT           deja exporte par la CI
+#   PORT dans .env      la MEME source que scripts/dev-api.ps1
+#   3000                valeur du produit, dans .env.example
+#
+# `.env` passe avant le defaut parce que c'est la configuration locale
+# reelle : si le fichier dit 3001, le service est sur 3001, et le deviner
+# autrement serait faux par construction. Une configuration a UNE source.
+$FichierEnv = Join-Path (Join-Path (Join-Path $PSScriptRoot '..') '..') '..'
+$FichierEnv = Join-Path $FichierEnv '.env'
+$PortDepuisEnv = if (Test-Path $FichierEnv) {
+    $ligne = Get-Content $FichierEnv |
+             Where-Object { $_ -match '^\s*PORT=' } |
+             Select-Object -First 1
+    if ($ligne -match '=(\d+)') { $Matches[1] }
+}
+
+$PortApi = if ($env:ADKCARS_PORT) { $env:ADKCARS_PORT }
+           elseif ($env:PORT)     { $env:PORT }
+           elseif ($PortDepuisEnv) { $PortDepuisEnv }
+           else                   { '3000' }
+$Base = "http://127.0.0.1:$PortApi"
 
 $suffix = '{0:D8}' -f ([DateTime]::UtcNow.Ticks % 100000000)
 $Phone = "+2250710$suffix"
@@ -111,12 +135,14 @@ Write-Host '=== 4. LE FLUX STREAM ET TRANSMET UN EVENEMENT NEUF ===' -Foreground
 # au-dela du separateur d'en-tetes, ce qui perdait le premier evenement
 # et(&(ne montrait aucun en-tete).
 $client = New-Object System.Net.Sockets.TcpClient
-$client.Connect('127.0.0.1', 3000)
+$client.Connect('127.0.0.1', [int]$PortApi)
 $stream = $client.GetStream()
 $stream.ReadTimeout = 2000
 
+# L'en-tete `Host` porte le port : un SSE mal route derriere un proxy
+# s'y distingue. Il suit donc la meme variable que la connexion.
 $request = "GET /realtime/events HTTP/1.1`r`n" +
-           "Host: 127.0.0.1:3000`r`n" +
+           "Host: 127.0.0.1:$PortApi`r`n" +
            "Authorization: Bearer $token`r`n" +
            "Accept: text/event-stream`r`n" +
            "Connection: keep-alive`r`n`r`n"
