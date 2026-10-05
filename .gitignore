@@ -39,3 +39,6 @@ Thumbs.db
 tmp/
 temp/
 *.tmp
+# Fichier d'identification du processus de developpement : local,
+# sans valeur pour le depot.
+apps/api/.dev-api.pid

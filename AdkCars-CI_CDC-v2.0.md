@@ -383,16 +383,70 @@ Le taux n'est donc **pas unique**. Il se résout par ordre de priorité, puis es
 
 ### 4.6 Politiques financières
 
-| Politique | Contenu minimal |
-|---|---|
-| Annulation client | Délai gratuit, pénalité, remboursement partiel ou total — `[TBD]` |
-| Non-présentation (no-show) | Cas le plus fréquent en CI : deposition forfeiture `[TBD]` |
-| Annulation fournisseur | Pénalité appliquée au fournisseur ; impact sur la note |
-| Restitution tardive | Tarif horaire de dépassement `[TBD]` |
-| Dommages | Constat photo obligatoire via l'app ; chaîne de validation et de facturation `[TBD]` |
-| Remboursement | Délai maximal de remboursement par canal `[TBD]` |
-| Litige | Circuit de médiation, Qui détermine l'arbitrage, délais `[TBD]` |
-| Perte de clé / de carte | `[TBD]` |
+#### Décisions prises le 05/10/2026 (A-21)
+
+| Politique | Règle retenue | Où elle est appliquée |
+|---|---|---|
+| **Annulation client** | Gratuite jusqu'à **24 h** avant le départ ; au-delà, **50 % du tarif de location** | `booking_financial_outcome()` |
+| **Non-présentation** | **Caution entière confisquée** ; la location n'est pas facturée | `booking_financial_outcome()` |
+| **Restitution tardive** | **30 min de grâce**, puis chaque **heure commencée** × **50 % du tarif journalier** | `booking_overtime()` |
+
+#### La base de calcul de la pénalité : la location, jamais le total
+
+`total_amount` **inclut** la caution — vérifié : 680 000 = 180 000 de
+location + 500 000 de caution.
+
+Une pénalité lue sur `total_amount` préleverait donc la caution :
+50 % de 680 000 = 340 000, dont 250 000 de caution. Le client perdrait
+deux fois — une fois par la pénalité, une fois par la confiscation
+déguisée de son dépôt de garantie. Sur une location de 180 000, cela
+représente une pénalité de 90 000, et non de 340 000.
+
+Toutes les fonctions lisent donc `rentalAmount` dans `pricing_snapshot`.
+La contrainte de cohérence du § 8.6 rend l'erreur impossible plutôt que
+de compter sur une relecture attentive.
+
+#### Reste à décider
+
+| Politique | Contenu minimal | État |
+|---|---|---|
+| Annulation fournisseur | Pénalité appliquée au fournisseur ; impact sur la note | `[TBD]` — non traitée |
+| Dommages | Constat photo obligatoire via l'app ; chaîne de validation et de facturation | `[TBD]` — tables créées, module absent |
+| Remboursement | Délai maximal de remboursement par canal | `[TBD]` — bloque le module Paiement |
+| Litige | Circuit de médiation, qui détermine l'arbitrage, délais | `[TBD]` — tables créées, module absent |
+| Perte de clé / de carte | — | `[TBD]` |
+
+#### Les règles sont des données, pas des constantes
+
+Elles vivent dans la table `financial_policy`, par niveau : plateforme
+d'abord, propriétaire prioritaire. Un propriétaire peut proposer des
+conditions différentes sans que l'API ait à les connaître.
+
+La règle appliquée à une réservation est **figée** dans
+`booking.policy_snapshot` au moment de sa création, par trigger. Modifier
+une politique ne réécrit donc pas l'histoire des réservations passées.
+
+#### Les snapshots sont immuables
+
+Vérifié avant correction, sur la base de développement : un devis figé
+pouvait être réécrit et une règle financière effacée, tous deux sans
+message. Figer une règle sans interdire de la modifier ne la fige pas.
+
+`pricing_snapshot`, `policy_snapshot`, `total_amount` et `deposit_amount`
+sont désormais verrouillés en écriture. Corriger une erreur de saisie
+n'est plus une mise à jour : c'est une annulation suivie d'une nouvelle
+réservation. La correction est ainsi un acte métier tracé, visible des
+deux parties, et non une retouche invisible.
+
+#### Une hypothèse, pas une décision
+
+`no_show_charges_rental` vaut `false` : en cas de non-présentation, la
+caution est confisquée mais la location n'est pas facturée, le service
+n'ayant pas été rendu.
+
+La question posée portait sur la **caution** seule. C'est un paramètre
+modifiable sans migration, exposé ici pour que l'hypothèse soit visible
+plutôt qu'enfouie dans une formule.
 
 ### 4.7 — TVA : décision et point à valider (A-07, 03/10/2026)
 
@@ -1780,6 +1834,8 @@ Procédures de : démarrage, sauvegarde et restauration, montée en charge, rota
 | ~~**A-17**~~ **RÉSOLU 03/10** | **Temps réel : SSE au lieu de Socket.IO** (§10.2 bis) | Perte du bidirectionnel et du routage multi-instance — compensé par une reconnexion native, plus robuste sur réseau instable | **Fait** |
 | ~~**A-18**~~ **RÉSOLU 03/10** | **Hébergement : Vercel (API + web) + Supabase (PostgreSQL)** (§10.2 bis) | ⚠️ Impose l'absence d'état en mémoire, un stockage de débit partagé obligatoire, et des workers hors Vercel. Contre la recommandation antérieure d'un hôte à processus persistant | **Fait** |
 | ~~**A-19**~~ **RÉSOLU 03/10** | **Aucune TVA collectée** (§4.7) | ⚠️ **Cohérent si la plateforme n'est pas assujettie — à confirmer par un fiscaliste avant tout encaissement réel** | **Fait** |
+| ~~**A-20**~~ **RÉSOLU 04/10** | **Paiements en espèces avec commission facturée séparément** (§4.4 bis) | ⚠️ Impose **deux circuits financiers non additionnables** : `provider_ledger` porte `gross_platform`/`balance_due`/`net_to_pay` d'un côté, `gross_direct`/`commission_outstanding`/`commission_written_off` de l'autre. Une fusion vaudrait faire apparaître de l'argent qui n'a jamais été encaissé. `booking.funds_channel` est immuable. | **Fait** — migration 0005 |
+| ~~**A-21**~~ **RÉSOLU 05/10** | **Politiques financières : annulation, non-présentation, restitution tardive** (§4.6) | Annulation gratuite sous 24 h puis 50 % **du tarif de location** (non du total, qui inclut la caution) ; non-présentation : caution entière confisquée, location non facturée ; restitution tardive : 30 min de grâce puis heure commencée × 50 %. ⚠️ `no_show_charges_rental = false` est une **hypothèse**, pas une décision confirmée. Exige A-04 (capture de la caution) pour être appliquée. | **Fait** — migration 0007, 19 vérifications |
 
 ---
 

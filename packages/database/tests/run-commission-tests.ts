@@ -16,6 +16,9 @@ const TESTS_FILE = fileURLToPath(new URL('./commission-smoke.sql', import.meta.u
 const DIRECT_TESTS_FILE = fileURLToPath(
   new URL('./direct-payments-smoke.sql', import.meta.url),
 );
+const POLICY_TESTS_FILE = fileURLToPath(
+  new URL('./politiques-smoke.sql', import.meta.url),
+);
 const MIGRATIONS_DIR = fileURLToPath(new URL('../migrations/', import.meta.url));
 const FIXTURES = fileURLToPath(new URL('./fixtures.sql', import.meta.url));
 
@@ -101,6 +104,7 @@ async function main(): Promise<number> {
     '0004-privileges-application.sql',
     '0005-paiements-directs-et-creances.sql',
     '0006-donnees-reference.sql',
+  '0007-politiques-financieres.sql',
   ]) {
       const applied = await run(
         [...baseArgs(), '-d', TEST_DB, '-q', '-f', `${MIGRATIONS_DIR}${migration}`],
@@ -142,6 +146,22 @@ async function main(): Promise<number> {
     if (direct.code !== 0) {
       process.stdout.write(
         '\nECHEC : la separation des circuits financiers n est pas imposee\n',
+      );
+      return 1;
+    }
+
+    // Politiques financieres (CDCS 4.6, migration 0007).
+    process.stdout.write('\nexecution des tests de politiques financieres...\n\n');
+    const policies = await run([
+      ...baseArgs(), '-d', TEST_DB, '-f', POLICY_TESTS_FILE,
+    ]);
+
+    process.stdout.write(policies.out);
+    if (policies.err.trim()) process.stdout.write(policies.err);
+
+    if (policies.code !== 0) {
+      process.stdout.write(
+        '\nECHEC : une politique financiere n est pas imposee\n',
       );
       return 1;
     }

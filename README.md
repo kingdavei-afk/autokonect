@@ -44,14 +44,20 @@ mobile (CDCS §10.3, voir [ADR-001](docs/adr/ADR-001-monorepo.md)).
   sont résolues par priorité et figées sur la réservation ; **aucune TVA
   n'est collectée**. Vue `provider_ledger` pour la trésorerie de chaque
   partenaire.
+- **Politiques financières décidées** (A-21, 05/10/2026) : annulation
+  gratuite sous 24 h puis 50 % du tarif de location ; non-présentation,
+  caution entière confisquée ; restitution tardive, 30 min de grâce puis
+  heure commencée × 50 %. Paramétrées en données dans `financial_policy`,
+  figées sur chaque réservation, et appliquées par la base
+  (`booking_financial_outcome`, `booking_overtime`).
 - Instance PostgreSQL 16.10 portable pour le développement local.
 
-**Bilan des tests : 347 au vert**
+**Bilan des tests : 376 au vert**
 
 | Suite | Volume |
 |---|---|
 | Règles métier en base (`pnpm db:test`) | 11 |
-| Commission et trésorerie (`pnpm db:commission`) | 23 |
+| Commission, paiements directs et politiques financières (`pnpm db:commission`) | 52 |
 | Privilèges du rôle applicatif (`pnpm db:privileges`) | 8 |
 | Contrats partagés (Vitest) | 128 |
 | API (Vitest) | 33 |
@@ -189,7 +195,7 @@ curl.exe http://127.0.0.1:3000/health/ready
 | `pnpm db:migrate:status` | État des migrations |
 | `pnpm db:reset` | Recrée le schéma (développement uniquement) |
 | `pnpm db:test` | **11 tests de règles métier sur base réelle** |
-| `pnpm db:commission` | **23 tests de commission et de trésorerie** |
+| `pnpm db:commission` | **52 tests : commission (23), paiements directs (9), politiques financières (20)** |
 | `pnpm db:privileges` | **8 tests du contrat de privilèges (CDCS 12.1)** |
 | `.\scripts\dev-api.ps1` | Démarre l'API en arrière-plan, journaux exploitables |
 | `.\scripts\dev-api.ps1 -Stop` | Arrête l'API démarrée par le script |
@@ -342,6 +348,27 @@ Ces règles viennent du CDC et sont appliquées par le code, pas seulement
     de **référence** (devises) sont semées par migration ; les
     données **commerciales** (formules, catégories, réglages)
     restent hors migration, car elles appartiennent à l'exploitant.
+28. **Un devis figé ne se réécrit pas.** `pricing_snapshot`,
+    `policy_snapshot`, `total_amount` et `deposit_amount` sont verrouillés
+    en écriture. Vérifié avant correction : ils étaient réinscriptibles,
+    sans message. Figer une règle sans interdire de la modifier ne la fige
+    pas. Corriger une erreur de saisie passe par une annulation puis une
+    nouvelle réservation — un acte métier tracé, visible des deux parties,
+    et non une retouche invisible.
+29. **Une règle financière se lit dans le snapshot, pas dans le total.**
+    `total_amount` inclut la caution (680 000 = 180 000 de location +
+    500 000 de caution). Une pénalité calculée dessus prélèverait la
+    caution : 50 % de 680 000 = 340 000, dont 250 000 de dépôt. Le client
+    perdrait deux fois. Toutes les fonctions lisent `rentalAmount`, et la
+    base refuse un snapshot incohérent avec `total_amount`.
+30. **Une vérification qui peut ne rien vérifier est pire qu'aucune.** La
+    cohérence entre le snapshot et la colonne était testée par `<>`. Sur
+    une clé absente, l'opérande vaut `NULL`, donc `NULL <> x` vaut `NULL`,
+    qui n'est pas vrai : le refus n'était jamais atteint. `IS DISTINCT
+    FROM` traite `NULL` comme une valeur, donc une clé absente devient un
+    refus. Même cause que le bug des montants lus dans le mauvais
+    document : `jsonb ->> 'clé'` ne lève pas sur une clé absente, il
+    renvoie `NULL`, qui se propage en silence.
 15. **Un véhicule publié dont le tarif change repasse en validation.**
     La modification doit être revue avant de redevenir visible.
 16. **La publication est bloquée si un document obligatoire est
