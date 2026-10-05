@@ -52,7 +52,7 @@ mobile (CDCS §10.3, voir [ADR-001](docs/adr/ADR-001-monorepo.md)).
   (`booking_financial_outcome`, `booking_overtime`).
 - Instance PostgreSQL 16.10 portable pour le développement local.
 
-**Bilan des tests : 447 au vert**
+**Bilan des tests : 463 au vert**
 
 | Suite | Volume |
 |---|---|
@@ -66,7 +66,7 @@ mobile (CDCS §10.3, voir [ADR-001](docs/adr/ADR-001-monorepo.md)).
 | Back-office de validation (bout en bout) | 26 |
 | Flux temps réel SSE (bout en bout) | 17 |
 | Réservation (bout en bout) | 56 |
-| **Paiement (bout en bout)** | **31** |
+| **Paiement (bout en bout)** | **47** |
 
 ### Surfaces
 
@@ -213,7 +213,7 @@ pnpm build
 .\apps\api\test\admin-flow.ps1     # 26 vérifications
 .\apps\api\test\realtime-flow.ps1  # 17 vérifications
 .\apps\api\test\booking-flow.ps1   # 56 vérifications
-.\apps\api\test\payment-flow.py     # 31 vérifications
+.\apps\api\test\payment-flow.py     # 47 vérifications
 ```
 
 Ces tests lisent le code OTP dans `apps\api\api.err.log`, écrit par le

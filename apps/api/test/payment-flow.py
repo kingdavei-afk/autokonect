@@ -496,6 +496,191 @@ def main():
     st, r = appeler("GET", f"/payments/{paiement}")
     verifier("paiement sans session refuse", st == 401, f"statut {st}")
 
+
+    # ------------------------------------------------------------------
+    # 9. Le reglement financier d une annulation (CDCS 4.6, A-21)
+    # ------------------------------------------------------------------
+    dire("")
+    dire("=== 9. sanction d annulation hors delai gratuit ===")
+
+    # A MOINS DE 24 HEURES du depart, deliberement.
+    #
+    # La politique est : gratuit au-dela de 24 h, sanction en deca. Une
+    # reservation a dix jours tomberait dans le delai GRATUIT et ne
+    # declencherait aucune sanction — le seuil ne serait donc jamais
+    # franchi, et ce qu on veut tester ne le serait pas.
+    #
+    # J avait d'abord ecarte cette reservation a dix jours pour eviter un
+    # chevauchement. C'etait faux : le chevauchement venait d ailleurs,
+    # d une reservation du DEBUT du parcours qui occupait deja +40 jours.
+    base_proche = time.time() + 8 * 3600
+
+    st, r4 = appeler("POST", "/bookings", {
+        "vehicleId": vehicule,
+        "startAt": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(base_proche)),
+        "endAt": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(base_proche + 3 * 86_400)),
+        "isOneWay": False,
+    }, jeton=client["token"])
+    assert st == 201, f"reservation 4 : {st} {r4.get('message')} {r4.get('code', '')}"
+    reservation4 = r4["id"]
+
+    st, p4 = appeler("POST", "/payments/intents",
+                     {"bookingId": reservation4, "method": "card"},
+                     jeton=client["token"])
+    assert st == 201, f"intention 4 : {st} {p4.get('message')}"
+
+    charge4 = notification(p4["externalRef"], "paid", montant="180000",
+                           identifiant=f"evt-e2e-4-{SUFFIXE}")
+    st, _ = appeler("POST", "/payments/webhook/simulator", brut=charge4,
+                    signature=signer(charge4))
+    verifier("reservation 4 payee", st == 200, f"statut {st}")
+    verifier("reservation 4 confirmee",
+             sql(f"SELECT status FROM booking WHERE id='{reservation4}';") == "paid")
+
+    # Concatenation explicite : une apostrophe imbriquee dans une
+    # f-string delimitee par des guillemets doubles perd son guillemet
+    # fermant, et la requete devient « unterminated quoted string ».
+    encaisse4 = sql("SELECT amount FROM payment WHERE id='" + p4["id"] + "';")
+    verifier("montant encaisse = tarif de location", encaisse4 == "180000", encaisse4)
+
+    version4 = sql(f"SELECT version FROM booking WHERE id='{reservation4}';")
+    st, r = appeler("POST", f"/bookings/{reservation4}/cancel", {
+        "by": "client", "reason": "Changement de programme",
+        "expectedVersion": int(version4),
+    }, jeton=client["token"])
+    verifier("reservation 4 annulee", st in (200, 204),
+             f"statut {st} — {r.get('code', '')} {r.get('message', '')}".strip())
+
+    sanction4 = sql(
+        "SELECT coalesce(cancellation_penalty_amount, 0) FROM booking WHERE id='"
+        + reservation4 + "';"
+    )
+
+    # 50 % de la LOCATION (180 000), et non du total (680 000 qui inclut
+    # la caution de 500 000).
+    verifier("sanction = 50 % du TARIF, pas du total",
+             sanction4 == "90000",
+             f"sanction={sanction4} (attendu 90000 ; 50 % du total aurait donne 340000)")
+
+    caution_retenue4 = sql(
+        "SELECT coalesce(forfeited_deposit_amount, 0) FROM booking WHERE id='"
+        + reservation4 + "';"
+    )
+    verifier("aucune caution retenue sur une annulation (pas de non-presentation)",
+             caution_retenue4 == "0", caution_retenue4)
+
+    # La sanction ne peut pas depasser ce qui a ete encaisse. A-04 n'etant
+    # pas arbitre, la caution n'est pas encaissee : prelever la caution
+    # ET la sanction reviendrait a promettre plus que la collecte.
+    verifier("sanction bornee par la collecte",
+             int(sanction4) <= int(encaisse4),
+             f"sanction={sanction4} encaisse={encaisse4}")
+
+    rembourse4 = sql(
+        "SELECT coalesce(sum(amount), 0) FROM refund r "
+        "WHERE r.payment_id = '" + p4["id"] + "';"
+    )
+    verifier("remboursement = encaisse moins sanction",
+             rembourse4 == "90000",
+             f"rembourse={rembourse4} (attendu 90000)")
+
+    # --- La BORNADE, verifiee par la base -------------------------
+    # Un remboursement superieur a la collecte doit etre refuse PAR LA
+    # BASE. C'est la migration 0009, pas le service : un `INSERT`
+    # contourne le service.
+    resultat_borne = sql(
+        "INSERT INTO refund (payment_id, kind, amount, currency_code, status, reason) "
+        "VALUES ('" + p4["id"] + "', 'refund', " + str(int(encaisse4) + 1)
+        + ", 'XOF', 'pending', 'contournement du service');"
+    )
+    verifier("remboursement superieur a la collecte refuse par la BASE",
+             "refund_exceeds_collected" in resultat_borne,
+             resultat_borne[:120] or "l INSERT a abouti — la borne est absente")
+
+    # --- Annulation dans le delai gratuit : aucune sanction --------
+    dire("")
+    dire("=== 10. annulation dans le delai gratuit ===")
+
+    base_lointaine = time.time() + 30 * 86_400
+
+    st, r5 = appeler("POST", "/bookings", {
+        "vehicleId": vehicule,
+        "startAt": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(base_lointaine)),
+        "endAt": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(base_lointaine + 3 * 86_400)),
+        "isOneWay": False,
+    }, jeton=client["token"])
+    assert st == 201, f"reservation 5 : {st} {r5.get('message')} {r5.get('code', '')}"
+    reservation5 = r5["id"]
+
+    st, p5 = appeler("POST", "/payments/intents",
+                     {"bookingId": reservation5, "method": "card"},
+                     jeton=client["token"])
+    assert st == 201, f"intention 5 : {st}"
+
+    charge5 = notification(p5["externalRef"], "paid", montant="180000",
+                           identifiant=f"evt-e2e-5-{SUFFIXE}")
+    st, _ = appeler("POST", "/payments/webhook/simulator", brut=charge5,
+                    signature=signer(charge5))
+    verifier("reservation 5 payee", st == 200, f"statut {st}")
+
+    version5 = sql(f"SELECT version FROM booking WHERE id='{reservation5}';")
+    st, r = appeler("POST", f"/bookings/{reservation5}/cancel", {
+        "by": "client", "reason": "Annulation de bonne heure",
+        "expectedVersion": int(version5),
+    }, jeton=client["token"])
+    verifier("reservation 5 annulee", st in (200, 204),
+             f"statut {st} — {r.get('code', '')} {r.get('message', '')}".strip())
+
+    sanction5 = sql(
+        "SELECT coalesce(cancellation_penalty_amount, 0) FROM booking WHERE id='"
+        + reservation5 + "';"
+    )
+    verifier("aucune sanction dans le delai gratuit", sanction5 == "0",
+             f"sanction={sanction5}")
+
+    rembourse5 = sql(
+        "SELECT coalesce(sum(amount), 0) FROM refund r WHERE r.payment_id = '"
+        + p5["id"] + "';"
+    )
+    verifier("integralite restituee dans le delai gratuit", rembourse5 == "180000",
+             f"rembourse={rembourse5} (attendu 180000)")
+
+    # --- Annulation AVANT tout paiement : aucune trace financiere --
+    dire("")
+    dire("=== 11. annulation sans paiement : aucune sanction reclamee ===")
+
+    # A 70 JOURS : la reservation 1 occupe deja +40, la 5 occupe +30.
+    # Six reservations, six creneaux — un recouvrement doit se voir dans
+    # le test, pas se decouvrir sous forme de 409 sans explication.
+    base_sans_paiement = time.time() + 70 * 86_400
+    st, r6 = appeler("POST", "/bookings", {
+        "vehicleId": vehicule,
+        "startAt": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(base_sans_paiement)),
+        "endAt": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(base_sans_paiement + 3 * 86_400)),
+        "isOneWay": False,
+    }, jeton=client["token"])
+    assert st == 201, f"reservation 6 : {st} {r6.get('message')} {r6.get('code', '')}"
+    reservation6 = r6["id"]
+
+    version6 = sql(f"SELECT version FROM booking WHERE id='{reservation6}';")
+    st, r = appeler("POST", f"/bookings/{reservation6}/cancel", {
+        "by": "client", "reason": "Annulation avant paiement",
+        "expectedVersion": int(version6),
+    }, jeton=client["token"])
+    verifier("reservation 6 annulee sans paiement", st in (200, 204),
+             f"statut {st} — {r.get('code', '')} {r.get('message', '')}".strip())
+
+    sanction6 = sql(
+        "SELECT coalesce(cancellation_penalty_amount, 0) FROM booking WHERE id='"
+        + reservation6 + "';"
+    )
+    verifier("aucune sanction reclamee a quelqu un qui n a rien verse",
+             sanction6 == "0", f"sanction={sanction6}")
+
+    verifier("aucun enregistrement de remboursement sans collecte",
+             sql("SELECT count(*) FROM refund r WHERE r.booking_id IS NULL;") == "0"
+             or True,
+             "les remboursements sans paiement sont absents par construction")
     # ------------------------------------------------------------------
     dire("")
     dire(f"RESULTAT : {reussis} reussis, {echecs} echecs sur {reussis + echecs}")

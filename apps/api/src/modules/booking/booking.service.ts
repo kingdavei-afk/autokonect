@@ -453,7 +453,172 @@ export class BookingService {
       });
     }
 
+    // Le reglement financier est calcule AVANT la transition, pour qu il
+    // soit ecrit dans la meme transaction que l annulation. L inverse
+    // laisserait une reservation annulee sans sanction appliquee, si
+    // l ecriture du reglement echouait apres coup.
+    await this.settleCancellation(row.id, input.by);
+
     return this.applyTransition(row, target, actor, input.reason, input.expectedVersion);
+  }
+
+  /**
+   * Reglement financier d'une annulation (CDCS 4.6, A-21).
+   *
+   * Appele AVANT la transition, dans la meme transaction. L'ordre est
+   * impose par la migration 0007 : `policy_snapshot` est fige a la
+   * creation et ne se reecrit pas, donc il doit etre present quand la
+   * sanction est calculee.
+   *
+   * ------------------------------------------------------------------------
+   * LE DEVIS ET LA COLLECTE NE COINCIDENT PAS
+   * ------------------------------------------------------------------------
+   * `booking_financial_outcome` calcule sur le devis FIGE : tarif de
+   * location, caution ANNONCEE, taux de sanction. Le devis porte ce que
+   * le client a ACCEPTE.
+   *
+   * Ce qui a ete ENCAISSE n'est pas le devis. A-04 (capture de la
+   * caution) n'etant pas arbitre, la caution n'est pas collectee. Un
+   * remboursement calcule sur le devis rendrait donc de l'argent que
+   * personne n'a jamais donne.
+   *
+   * Chaque montant est donc borne par la collecte reelle, et le
+   * remboursement porte sur le PAIEMENT qui a encaisse — pas sur un
+   * total theorique.
+   *
+   * ------------------------------------------------------------------------
+   * RIEN ENCAISSE, RIEN A REGLEMENT
+   * ------------------------------------------------------------------------
+   * Une reservation annulee avant paiement ne produit NI sanction NI
+   * remboursement. On ne reclame pas une penalite a quelqu'un qui n'a
+   * rien verse, et un remboursement de zero serait un enregistrement
+   * sans objet : il polluerait le journal des remboursements sans rien
+   * dire sur l'argent.
+   */
+  private async settleCancellation(
+    bookingId: string,
+    annulePar: 'client' | 'provider',
+  ): Promise<void> {
+    const paiements: Array<{
+      id: string;
+      amount: string;
+      currency_code: string;
+      kind: string;
+    }> = await this.db
+      .selectFrom('payment')
+      .select(['id', 'amount', 'currency_code', 'kind'])
+      .where('booking_id', '=', bookingId)
+      .where('status', '=', 'paid')
+      .execute();
+
+    const encaisse = paiements.reduce(
+      (total: bigint, paiement) => total + BigInt(paiement.amount as string),
+      0n,
+    );
+
+    if (encaisse === 0n) {
+      // Aucune trace financiere : rien n'a bouge, donc rien a constater.
+      return;
+    }
+
+    // La fonction de la base applique la politique FIGEE : delai
+    // gratuit, taux de sanction, confiscation de la caution en cas de
+    // non-presentation. Elle refuse de calculer si la politique est
+    // absente — ce qui est le comportement voulu plutot qu'un defaut par
+    // defaut applique apres coup.
+    const [issue] = await this.db
+      .selectFrom(
+        sql<{
+          basis: string;
+          penalty_amount: string;
+          deposit_forfeited: string;
+        }>`booking_financial_outcome(${bookingId}, now())`.as('issue'),
+      )
+      .selectAll()
+      .execute();
+
+    // La sanction est plafonnee a la COLLECTE, pas au devis. C'est la
+    // seule borne qui ait un sens tant que la caution n'est pas
+    // encaissee : prelever 90 000 sur une collecte de 180 000 est
+    // possible, prelever 90 000 sur une collecte de 0 ne l'est pas.
+    // La fonction retourne TOUJOURS une ligne, ou leve. Le type ne le
+    // dit pas, et le code ne doit pas le présumer.
+    //
+    // Traiter `issue` comme présent sans le vérifier serait une
+    // assertion silencieuse : si la fonction change un jour pour renvoyer
+    // zéro ligne, le service construirait `BigInt(undefined)` — une
+    // exception opaque, loin de sa cause.
+    if (!issue) {
+      throw new ConflictException({
+        code: 'FINANCIAL_OUTCOME_UNAVAILABLE',
+        message:
+          'Le reglement financier de cette annulation n a pas pu etre calcule. Traitement manuel requis.',
+        details: { bookingId },
+      });
+    }
+
+    const sanction = BigInt(issue.penalty_amount);
+    const cautionRetenue = BigInt(issue.deposit_forfeited);
+
+    const sanctionEffective = sanction > encaisse ? encaisse : sanction;
+    const cautionEffective = cautionRetenue > encaisse ? encaisse : cautionRetenue;
+
+    const retenue = sanctionEffective + cautionEffective;
+
+    // Les colonnes sont figees (migration 0007) : on les ecrit UNE FOIS,
+    // a l'annulation. C'est ce qui rend la sanction verifiable a
+    // posteriori — un montant recalcule au moment du rapport pourrait
+    // differer de celui qui a ete prononce.
+    await this.db
+      .updateTable('booking')
+      .set({
+        cancellation_penalty_amount: sanctionEffective.toString(),
+        forfeited_deposit_amount: cautionEffective.toString(),
+      })
+      .where('id', '=', bookingId)
+      .execute();
+
+    if (retenue === 0n) {
+      // Annulation dans le delai gratuit : la sanction est nulle, mais
+      // l'argent collecte doit etre rendu. L'enregistrement existe malgre
+      // tout — c est lui qui dit au client ce qui va lui etre rendu.
+    }
+
+    const restant = encaisse - retenue;
+
+    if (restant > 0n) {
+      // Le remboursement est porte par le paiement qui a encaisse, et
+      // non par un total theorique. Plusieurs paiements pour une meme
+      // reservation sont normaux — un client qui echoue puis reessaye —
+      // et repartir le restant entre eux donnerait des fractions
+      // inexploitables au prestataire.
+      // Le type est DERIVE de la selection ci-dessus, pas reecrit. Un
+      // type declare a la main finit par diverger de la requete au
+      // prochain changement de colonne — et c'est ainsi qu'on lit un
+      // `undefined` en production sans avoir rien change.
+      type PaiementSelectionne = (typeof paiements)[number];
+
+      const principal: PaiementSelectionne = paiements.reduce(
+        (meilleur, candidat) =>
+          BigInt(candidat.amount as string) > BigInt(meilleur.amount as string)
+            ? candidat
+            : meilleur,
+      );
+
+      await this.db
+        .insertInto('refund')
+        .values({
+          payment_id: principal.id,
+          kind: cautionEffective > 0n ? 'deposit_capture' : 'refund',
+          amount: restant.toString(),
+          currency_code: principal.currency_code as string,
+          status: 'pending',
+          reason: annulePar === 'client'
+            ? 'Annulation du client'
+            : 'Annulation du fournisseur',
+        })
+        .execute();
+    }
   }
 
   /**
