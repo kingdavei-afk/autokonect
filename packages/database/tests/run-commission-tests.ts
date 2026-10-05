@@ -13,6 +13,9 @@ import { config as loadEnv } from 'dotenv';
 loadEnv({ path: fileURLToPath(new URL('../../../.env', import.meta.url)) });
 
 const TESTS_FILE = fileURLToPath(new URL('./commission-smoke.sql', import.meta.url));
+const DIRECT_TESTS_FILE = fileURLToPath(
+  new URL('./direct-payments-smoke.sql', import.meta.url),
+);
 const MIGRATIONS_DIR = fileURLToPath(new URL('../migrations/', import.meta.url));
 const FIXTURES = fileURLToPath(new URL('./fixtures.sql', import.meta.url));
 
@@ -84,6 +87,9 @@ async function main(): Promise<number> {
     '0001_init.sql',
     '0002_commission-et-reversement.sql',
     '0003-suppression-tva.sql',
+    '0004-privileges-application.sql',
+    '0005-paiements-directs-et-creances.sql',
+    '0006-donnees-reference.sql',
   ]) {
       const applied = await run(
         [...baseArgs(), '-d', TEST_DB, '-q', '-f', `${MIGRATIONS_DIR}${migration}`],
@@ -110,6 +116,21 @@ async function main(): Promise<number> {
     if (tests.code !== 0) {
       process.stdout.write(
         '\nECHEC : une regle de commission ou de tresorerie n est pas imposee\n',
+      );
+      return 1;
+    }
+
+    // Circuit direct et creances (A-20). Meme base, meme transaction :
+    // ces tests completent les precedents, ils ne repartent pas de zero.
+    process.stdout.write('\nexecution des tests de paiements directs...\n\n');
+    const direct = await run([...baseArgs(), '-d', TEST_DB, '-f', DIRECT_TESTS_FILE]);
+
+    process.stdout.write(direct.out);
+    if (direct.err.trim()) process.stdout.write(direct.err);
+
+    if (direct.code !== 0) {
+      process.stdout.write(
+        '\nECHEC : la separation des circuits financiers n est pas imposee\n',
       );
       return 1;
     }

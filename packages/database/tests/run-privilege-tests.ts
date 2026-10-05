@@ -35,6 +35,8 @@ const MIGRATIONS = [
   '0002_commission-et-reversement.sql',
   '0003-suppression-tva.sql',
   '0004-privileges-application.sql',
+  '0005-paiements-directs-et-creances.sql',
+  '0006-donnees-reference.sql',
 ];
 
 const PSQL =

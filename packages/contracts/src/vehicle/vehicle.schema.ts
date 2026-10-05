@@ -337,6 +337,19 @@ export const vehicleSummarySchema = z.object({
   fuel: fuelSchema,
   seats: z.number().int(),
   dailyRate: moneyOutputSchema,
+  /**
+   * Caution, des le resume.
+   *
+   * Elle determine le choix du vehicule autant que le tarif : c'est
+   * souvent elle qui fait basculer la decision, et un client qui
+   * decouvre la caution apres avoir choisi juge l'info tardive.
+   *
+   * Elle figurait auparavant uniquement dans le detail. Le catalogue
+   * affichait donc « Caution 0 XOF » — l'absence du champ etait
+   * interpretee comme un montant nul, ce qui laisse croire a une
+   * caution gratuite.
+   */
+  depositAmount: moneyOutputSchema,
   currencyCode: z.string().length(3),
   withDriver: z.boolean(),
   rating: ratingOutputSchema.nullable(),

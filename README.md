@@ -59,9 +59,21 @@ mobile (CDCS §10.3, voir [ADR-001](docs/adr/ADR-001-monorepo.md)).
 | Parcours véhicule (bout en bout) | 23 |
 | Back-office de validation (bout en bout) | 26 |
 | Flux temps réel SSE (bout en bout) | 17 |
-| **Réservation (bout en bout)** | **56** |
+| Réservation (bout en bout) | 56 |
 
-### Surface d'API
+### Surfaces
+
+| Application | Pile | Port local | URL |
+|---|---|---|---|
+| Site + back-office | Next.js 15, App Router | 3001 | http://localhost:3001 |
+| API | NestJS | 3000 | http://localhost:3000 |
+| Base | PostgreSQL 16 portable | 5432 | — |
+
+Le navigateur ne parle **jamais** à l'API : tout passe par des
+gestionnaires de routes Next, et les jetons vivent dans des cookies
+`httpOnly`. Voir la règle 26.
+
+## Surface d'API
 
 | Méthode | Route | Accès |
 |---|---|---|
@@ -316,6 +328,20 @@ Ces règles viennent du CDC et sont appliquées par le code, pas seulement
     commencée, relancer une réservation clôturée, résoudre un litige à
     la place du client : chaque cas est refusé explicitement, avec la
     liste de ce qui serait possible.
+26. **La sortie de l'API est validée contre son schéma**, au même
+    titre que l'entrée. Les schémas n'étaient appliqués qu'aux
+    requêtes : un mapper pouvait omettre un champ obligatoire sans
+    que rien ne le signale, et l'interface affichait « Caution 0
+    XOF » pour une caution de 500 000. Un montant absent échoue
+    désormais le rendu plutôt que d'être affiché à zéro — un zéro
+    affiché sur un prix est une fausse information.
+27. **Une base neuve doit être reproductible par les seules
+    migrations.** `currency` n'était semée que par les jeux de
+    données de test : une base créée en production ne pouvait pas
+    accepter un seul véhicule, faute de clé étrangère. Les données
+    de **référence** (devises) sont semées par migration ; les
+    données **commerciales** (formules, catégories, réglages)
+    restent hors migration, car elles appartiennent à l'exploitant.
 15. **Un véhicule publié dont le tarif change repasse en validation.**
     La modification doit être revue avant de redevenir visible.
 16. **La publication est bloquée si un document obligatoire est

@@ -1,0 +1,59 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    color-scheme: light;
+  }
+
+  html {
+    /* Un ecran de telephone en plein soleil a besoin de contrastes
+       forts : le texte gris clair devient illisible. */
+    -webkit-text-size-adjust: 100%;
+  }
+
+  body {
+    @apply bg-encre-50 text-encre-900 antialiased;
+  }
+
+  /* Le focus clavier doit etre VISIBLE. Le supprimer rendrait le site
+     inutilisable au clavier, sans aucun gain visuel. */
+  :focus-visible {
+    @apply outline-none ring-2 ring-marque-500 ring-offset-2 ring-offset-encre-50;
+  }
+}
+
+@layer components {
+  .carte {
+    @apply rounded-xl border border-encre-200 bg-white shadow-sm;
+  }
+
+  .bouton-primaire {
+    @apply inline-flex items-center justify-center gap-2 rounded-lg bg-marque-600
+           px-4 py-2.5 font-medium text-white transition
+           hover:bg-marque-700 active:bg-marque-800
+           disabled:cursor-not-allowed disabled:opacity-50;
+  }
+
+  .bouton-secondaire {
+    @apply inline-flex items-center justify-center gap-2 rounded-lg border border-encre-300
+           bg-white px-4 py-2.5 font-medium text-encre-700 transition
+           hover:bg-encre-50 active:bg-encre-100
+           disabled:cursor-not-allowed disabled:opacity-50;
+  }
+
+  .champ {
+    @apply w-full rounded-lg border border-encre-300 bg-white px-3 py-2.5
+           text-encre-900 placeholder:text-encre-400
+           focus:border-marque-500 focus:outline-none focus:ring-1 focus:ring-marque-500;
+  }
+
+  .etiquette {
+    @apply mb-1.5 block text-sm font-medium text-encre-700;
+  }
+
+  .etiquette-statut {
+    @apply inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium;
+  }
+}

@@ -296,6 +296,10 @@ describe('pagination', () => {
           fuel: 'petrol',
           seats: 5,
           dailyRate: '3500000',
+          // La caution fait partie du resume : c'est elle que l'interface
+          // affiche sur une carte du catalogue. Son absence s'y lisait
+          // « Caution 0 XOF », c'est-a-dire « aucune caution demandee ».
+          depositAmount: '500000',
           currencyCode: 'XOF',
           withDriver: false,
           rating: null,

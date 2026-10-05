@@ -25,6 +25,7 @@ export function toSummary(row: VehicleSummarySource): VehicleSummary {
     fuel: row.fuel,
     seats: row.seats,
     dailyRate: row.daily_rate,
+    depositAmount: row.deposit_amount,
     currencyCode: row.currency_code,
     withDriver: row.with_driver,
     rating: row.rating,

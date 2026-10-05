@@ -221,7 +221,7 @@ BEGIN
   -- Les noms de la liste SELECT doivent etre les COLONNES de la vue.
   -- Ecrire `gross, deposit, collected` resoudrait sur les variables
   -- PL/pgSQL du meme nom : retour NULL, sans aucune erreur levee.
-  SELECT gross_amount, deposit_held, total_collected
+  SELECT gross_platform, deposit_held, total_collected
     INTO gross, deposit, collected
   FROM provider_ledger
   WHERE provider_type = 'owner' AND provider_id = owner_id;

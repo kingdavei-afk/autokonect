@@ -25,6 +25,15 @@ export interface VehicleSummarySource {
   fuel: 'petrol' | 'diesel' | 'hybrid' | 'electric' | 'lpg';
   seats: number;
   daily_rate: string;
+  /**
+   * Caution du vehicule, exposee des le RESUME.
+   *
+   * Elle y est car le client doit connaître la caution AVANT de
+   * choisir un vehicule : c'est une information determinant du choix,
+   * pas un detail affiche apres coup. Son absence affichait « Caution
+   * 0 XOF », ce qui laisse croire qu'aucune caution n'est demandee.
+   */
+  deposit_amount: string;
   currency_code: string;
   with_driver: boolean;
   rating: string | null;

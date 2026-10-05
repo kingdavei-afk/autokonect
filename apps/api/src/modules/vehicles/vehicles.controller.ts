@@ -10,11 +10,15 @@ import {
   Post,
   Query,
   UseGuards,
+  UseInterceptors,
 } from '@nestjs/common';
 
 import {
   buildPagination,
   createVehicleSchema,
+  vehicleDetailSchema,
+  vehicleSummarySchema,
+  paginated,
   updateVehicleSchema,
   uploadDocumentSchema,
   vehicleSearchSchema,
@@ -24,6 +28,7 @@ import {
   type VehicleSearchInput,
 } from '@adkcars/contracts';
 
+import { zodArrayResponse, zodResponse } from '../../common/interceptors/zod-response.interceptor';
 import { zodPipe } from '../../common/pipes/zod-validation.pipe';
 import { CurrentUser, RolesGuard, type AuthenticatedUser } from '../auth/auth.guards';
 import { VehiclesService } from './vehicles.service';
@@ -52,7 +57,14 @@ export class VehiclesController {
    * navigateur et la connexion mobile ne tiennent plus la charge
    * (CDCS 11.3, contrainte terrain).
    */
+  // La sortie est verifiee contre son schema : sans cela, un mapper
+  // oublie un champ sans que rien ne le signale, et l'interface
+  // affiche un zero la ou il devrait y avoir un montant.
   @Get()
+  // La recherche renvoie une ENVELOPPE `{ items, pagination }`, pas un
+  // tableau : c'est donc l enveloppe complete qui est validee, ce qui
+  // verifie au passage que la pagination est complete.
+  @UseInterceptors(zodResponse(paginated(vehicleSummarySchema)))
   async search(@Query(zodPipe(vehicleSearchSchema)) input: VehicleSearchInput) {
     return this.vehicles.search(input);
   }
@@ -78,6 +90,7 @@ export class VehiclesController {
   }
 
   @Get(':id')
+  @UseInterceptors(zodResponse(vehicleDetailSchema))
   async findOne(
     @Param('id', ParseUUIDPipe) id: string,
     @CurrentUser() user: AuthenticatedUser,
