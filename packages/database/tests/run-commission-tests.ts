@@ -1,5 +1,11 @@
 /**
- * Runner des tests de commission (migration 0002).
+ * Runner des tests financiers (migrations 0002, 0005, 0007, 0008).
+ *
+ * Le nom dit « commission » alors qu il porte aussi les paiements
+ * directs, les creances, les politiques financieres et la machine a
+ * etats du paiement. Le renommage reste a faire : il ne doit pas
+ * retarder la couverture, mais il ne doit pas non plus donner
+ * l impression que le fichier couvre moins que son contenu.
  *
  * Meme approche que `run-schema-tests.ts` : base jetable, migrations
  * appliquees, tests dans une transaction annulee, base supprimee.
@@ -18,6 +24,9 @@ const DIRECT_TESTS_FILE = fileURLToPath(
 );
 const POLICY_TESTS_FILE = fileURLToPath(
   new URL('./politiques-smoke.sql', import.meta.url),
+);
+const PAYMENT_TESTS_FILE = fileURLToPath(
+  new URL('./paiement-machine-smoke.sql', import.meta.url),
 );
 const MIGRATIONS_DIR = fileURLToPath(new URL('../migrations/', import.meta.url));
 const FIXTURES = fileURLToPath(new URL('./fixtures.sql', import.meta.url));
@@ -105,6 +114,7 @@ async function main(): Promise<number> {
     '0005-paiements-directs-et-creances.sql',
     '0006-donnees-reference.sql',
   '0007-politiques-financieres.sql',
+  '0008-machine-etats-paiement.sql',
   ]) {
       const applied = await run(
         [...baseArgs(), '-d', TEST_DB, '-q', '-f', `${MIGRATIONS_DIR}${migration}`],
@@ -162,6 +172,22 @@ async function main(): Promise<number> {
     if (policies.code !== 0) {
       process.stdout.write(
         '\nECHEC : une politique financiere n est pas imposee\n',
+      );
+      return 1;
+    }
+
+    // Machine a etats du paiement (migration 0008).
+    process.stdout.write('\nexecution des tests de la machine a etats du paiement...\n\n');
+    const paymentMachine = await run([
+      ...baseArgs(), '-d', TEST_DB, '-f', PAYMENT_TESTS_FILE,
+    ]);
+
+    process.stdout.write(paymentMachine.out);
+    if (paymentMachine.err.trim()) process.stdout.write(paymentMachine.err);
+
+    if (paymentMachine.code !== 0) {
+      process.stdout.write(
+        '\nECHEC : une regle de la machine a etats du paiement n est pas imposee\n',
       );
       return 1;
     }
