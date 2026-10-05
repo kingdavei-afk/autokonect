@@ -1,0 +1,190 @@
+# ============================================================================
+# AdkCars CI - verification automatique
+# ============================================================================
+#
+# POURQUOI CE FICHIER EXISTE
+# ============================================================================
+# 347 tests existaient, et aucun ne tournait ailleurs que sur la machine
+# qui les a ecrits. Une pushed sur une branche ne verifiait rien : la
+# premiere decouverte d'une regression se faisait en production, devant un
+# client.
+#
+# Ce n'est pas un confort, c'est une condition de travail.
+#
+# ============================================================================
+# LE PIEGE : LES TESTS DE BASE NE SONT PAS ISOLES
+# ============================================================================
+# Les tests SQL creent une base jetable, appliquent les migrations,
+# executent des assertions, puis la suppriment.
+#
+# Sur une machine de developpement, c'est acceptable : une seule suite
+# tourne a la fois. En integration continue, les jobs s'executent en
+# PARALLELE sur le meme hote. Deux suites visant la meme base se
+# disputeraient le meme schema - l'une appliquerait ses migrations
+# pendant que l'autre executerait ses assertions.
+#
+# L'echec qui en resultante ne correspond a aucun defaut du code. Il
+# bloque la merging pour une cause imaginaire, et fait perdre une
+# demi-journee a etudier un fantome.
+#
+# Chaque suite nomme donc sa base d'apres l'identifiant d'execution
+# (`ADKCARS_TEST_DB`), et le job qui la cree est celui qui la supprime.
+#
+# ============================================================================
+# LE PIEGE : `pnpm test` LANCE LES TESTS D'INTEGRATION
+# ============================================================================
+# Les parcours de bout en bout appellent une API demarree a la main.
+# Absente en integration continue, ils echoueraient tous - non pas parce
+# que le code est casse, mais parce que le service manque.
+#
+# Ils sont donc explicitement exclus. Les lancer demande une API en
+# ecoute, et releve d'un job dedie plutot que d'une verification de type.
+# ============================================================================
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+# Une pushed sur `main` annule les executions en cours : elles testent un
+# commit qui n'est plus la tete de branche. Sans cela, une serie de
+# pushs rapides consomme des minutes de calcul pour un etat obsolete.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  NODE_VERSION: '22'
+
+jobs:
+  # ==========================================================================
+  # Socle : ce qui se passe si les dependances, les types ou la base cassent.
+  # ==========================================================================
+  socle:
+    name: Socle
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    services:
+      postgres:
+        # 16 : la version du CDC. Tester sur une autre version ne prouve
+        # rien - elle peut accepter un schema que la production refuse, ou
+        # refuser un schema qu'elle accepte.
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      # Les runners de tests SQL lisent `DIRECT_DATABASE_URL`, et non
+      # `DATABASE_URL` : les deux distinctions existent parce que la
+      # connexion de maintenance et la connexion applicative ne sont pas
+      # necessairement les memes (voir .env.example, port 6543 contre
+      # 5432). Ici elles coincident.
+      DIRECT_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/postgres
+      PGHOST: localhost
+      PGPORT: '5432'
+      PGUSER: postgres
+      PGPASSWORD: postgres
+      PGSSLMODE: disable
+
+      # Les suites SQL invoquent `psql` directement. L'image d'execution
+      # en fournit une copie, mais s'appuyer sur son contenu transforme
+      # toute evolution de l'image en panne du depot. Le client est donc
+      # declare comme une dependance a part entiere.
+      PSQL_BIN: psql
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Installer le client PostgreSQL
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes postgresql-client
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.34.6
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+
+      - name: Installer les dependances
+        run: pnpm install --frozen-lockfile
+
+      - name: Construire les paquets
+        run: pnpm -r --filter './packages/**' build
+
+      - name: Verifier les types
+        run: pnpm -r typecheck
+
+      # Chaque paquet est lance separement plutot que par `pnpm -r test` :
+      # ce dernier enchaine aussi les scripts d'integration, qui exigent
+      # une API en ecoute.
+      - name: Tests des contrats
+        run: pnpm --filter @adkcars/contracts test
+
+      - name: Tests de l'API
+        run: pnpm --filter @adkcars/api test
+
+      # Le web est compile, pas teste : il n'a encore aucun test. Le
+      # compiler verifie au minimum que les types et le rendu serveur
+      # tiennent - un ecran casse ne peut pas passer inapercu.
+      - name: Compiler le web
+        run: pnpm --filter @adkcars/web build
+
+      - name: Tests de schema
+        env:
+          ADKCARS_TEST_DB: adkcars_schema_${{ github.run_id }}
+        run: pnpm --filter @adkcars/database test:schema
+
+      # Les paiements directs et les creances (migration 0005) sont
+      # verifies par `test:commission` : les deux circuits portent sur la
+      # meme donnee - une reservation, sa commission, sa creance
+      # eventuelle. Les separer obligerait a reconstruire le meme decor
+      # deux fois, et les deux suites pourraient diverger sur lui.
+      - name: Tests de commission et de paiements
+        env:
+          ADKCARS_TEST_DB: adkcars_commission_${{ github.run_id }}
+        run: pnpm --filter @adkcars/database test:commission
+
+      - name: Tests de privileges
+        env:
+          ADKCARS_TEST_DB: adkcars_privileges_${{ github.run_id }}
+        run: pnpm --filter @adkcars/database test:privileges
+
+  # ==========================================================================
+  # Formatage - signale sans interdire.
+  # ==========================================================================
+  # Volontairement tolerant (`continue-on-error`). Un derangement de
+  # whitespace ne doit pas bloquer la correction d'une faille.
+  # ==========================================================================
+  format:
+    name: Formatage
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    continue-on-error: true
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.34.6
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm format:check

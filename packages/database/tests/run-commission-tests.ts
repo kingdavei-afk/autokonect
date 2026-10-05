@@ -27,7 +27,18 @@ const PSQL =
   }) ??
   'psql';
 
-const TEST_DB = 'adkcars_commission_test';
+/**
+ * Nom de la base jetable.
+ *
+ * Surchargeable par `ADKCARS_TEST_DB`, sans quoi deux executions en
+ * parallele — cas courant en integration continue — se disputeraient le
+ * meme schema. L'echec qui en resulted ne correspondrait a aucun defaut
+ * du code, et bloquerait l'acces a une erreur qui n'existe pas.
+ *
+ * En developpement, la variable est absente et le nom fixe suffit : une
+ * seule suite tourne a la fois sur la machine.
+ */
+const TEST_DB = process.env['ADKCARS_TEST_DB'] ?? 'adkcars_commission_test';
 
 function extractPassword(): string {
   const direct = process.env['DIRECT_DATABASE_URL'];
