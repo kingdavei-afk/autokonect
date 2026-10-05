@@ -473,12 +473,122 @@ export class BookingService {
    * ZERO ligne. Aucune fenetre, aucune ecriture partielle, aucun
    * verrou long a maintenir.
    */
+  /**
+   * Detail d une reservation, sans controle d acces.
+   *
+   * Reserve aux actions systemes dont l autorisation a deja ete verifiee
+   * — ou n avait pas lieu d'etre, faute d'appelant.
+   *
+   * Volontairement SANS controle. C'est ce qui distingue cette methode de
+   * `detail`, et la difference doit rester visible : une methode de
+   * lecture sans controle d'acces est une fuite si elle est appelee par
+   * une route.
+   */
+  private async detailForSystem(id: string): Promise<BookingDetail> {
+    const rows = await this.joinVehicles([id]);
+    const row = rows[0];
+
+    if (!row) {
+      throw new NotFoundException({
+        code: 'BOOKING_NOT_FOUND',
+        message: 'Reservation introuvable.',
+      });
+    }
+
+    const history = await this.loadHistory(id);
+
+    // Toutes les transitions sont proposees : il n'y a pas d'appelant
+    // dont le role restreigne le choix. La reservation vient de passer a
+    // `paid`, et le paiement decide de la suite.
+    return toDetail(row, allowedTransitionsForActor(row.status, 'client'), history);
+  }
+
+  /** Confirmation de paiement — point d'entree SYSTEME, sans utilisateur.
+   *
+   * Reservee au module Paiement, sur confirmation d'un encaissement par
+   * le prestataire. Volontairement etroite : elle ne fait qu'une chose.
+   *
+   * Elle n'exige pas d'acteur, et c'est deliberé. Un webhook est appele
+   * par un prestataire, pas par une personne. Lui fabriquer un acteur
+   * fictif lui donnerait les pouvoirs d'un administrateur — donc la
+   * possibilite d'annuler une reservation ou de l'ouvrir a un litige sur
+   * la seule foi d'une signature. Le niveau d'autorisation d'un webhook
+   * doit rester etroit, meme quand sa source est fiable.
+   *
+   * Le verrou de version est conserve : une annulation concurrente
+   * declenche `VERSION_CONFLIT` plutot que d'etre ecrasee. C'est
+   * exactement la course qu'il faut laisser remonter au paiement, qui
+   * saura alors ne pas encaisser.
+   *
+   * ORDRE IMPOSE : la reservation passe `paid` AVANT que le paiement
+   * ne soit marque `paid`. La migration 0008 refuse un encaissement sur
+   * une reservation annulee ; cette methode doit donc s'executer en
+   * premier, dans la meme transaction.
+   */
+  async confirmPaidByPayment(bookingId: string, expectedVersion: number): Promise<BookingDetail> {
+    const row = await this.rawBooking(bookingId);
+
+    if (!row) {
+      throw new NotFoundException({
+        code: 'BOOKING_NOT_FOUND',
+        message: 'Reservation introuvable.',
+      });
+    }
+
+    // Le seul etat depuis lequel un encaissement a du sens. Une
+    // reservation deja paye, annulee ou terminee ne se re-confirme pas :
+    // c'est le paiement qui doit etre examine, pas la reservation.
+    if (row.status !== 'awaiting_payment') {
+      throw new ConflictException({
+        code: 'BOOKING_NOT_AWAITING_PAYMENT',
+        message: `La reservation est au statut ${row.status} et ne peut pas etre confirmee par un paiement.`,
+        details: { status: row.status, expected: 'awaiting_payment' },
+      });
+    }
+
+    // Acteur systeme minimal : pas de courriel, pas de telephone. Ces
+    // champs n'existent pas dans `AuthenticatedUser` — un acteur
+    // systeme n'est pas un utilisateur, et lui en attribuer un
+    // enregistrerait dans l'audit une adresse qui n'appartient a
+    // personne.
+    // Aucun acteur. Une confirmation de paiement n'est portee par
+    // personne : elle est constatee. Fabriquer un identifiant aurait
+    // inscription dans l'audit un utilisateur inexistant.
+    return this.applyTransition(
+      row,
+      'paid',
+      null as unknown as AuthenticatedUser,
+      undefined,
+      expectedVersion,
+      'Paiement confirme par le prestataire',
+    );
+  }
+
   private async applyTransition(
     row: BookingRow,
     to: BookingStatus,
     actor: AuthenticatedUser,
-    reason: string | undefined,
-    expectedVersion: number,
+      reason: string | undefined,
+      expectedVersion: number,
+      /**
+       * Origine systeme de la transition, quand elle n est portee
+       * par personne.
+       *
+       * Renseignee pour une expiration automatique ou une confirmation
+       * par un prestataire. Deux effets, tous deux voulus :
+       *
+       *   * `booking_status_history.actor_id` est mis a `NULL`. La colonne
+       *     est nullable precisement pour ces cas ; y inscrire un
+       *     identifiant fabrique donnerait a l audit un utilisateur qui
+       *     n existe pas — un mensonge qui passe parce qu il a la bonne
+       *     forme.
+       *   * le controle d acces du retour est ignore : une action
+       *     systeme n a pas d appelant, donc personne a autoriser.
+       *
+       * Explicite plutot que deduit d un acteur nul : un `actor` nul
+       * passe par accident ne produirait pas ce comportement.
+       */
+      systemReason: string | undefined = undefined,
   ): Promise<BookingDetail> {
     if (row.version !== expectedVersion) {
       throw new ConflictException({
@@ -538,14 +648,26 @@ export class BookingService {
         // qu'un changement d'etat inexplique.
         await sql`
           INSERT INTO booking_status_history (booking_id, from_status, to_status, actor_id, reason)
-          VALUES (${row.id}, ${row.status}, ${to}, ${actor.id}, ${reason ?? null})
+            VALUES (
+              ${row.id},
+              ${row.status},
+              ${to},
+              ${systemReason ? null : actor.id},
+              ${systemReason ?? reason ?? null}
+            )
         `.execute(trx);
       });
     } catch (error) {
       throw this.translate(error);
     }
 
-    return this.detail(row.id, actor);
+      // Une action systeme n a pas d appelant : repasser par
+      // `detail` ferait echouer le controle d acces, qui compare
+      // l acteur a la reservation. L autorisation a deja ete
+      // verifiee — ou n avait pas lieu d etre, faute d appelant.
+      return systemReason
+        ? await this.detailForSystem(row.id)
+        : this.detail(row.id, actor);
   }
 
   // ==================================================================

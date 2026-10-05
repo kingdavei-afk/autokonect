@@ -144,7 +144,7 @@ BEGIN
 END
 $$;
 
-CREATE TRIGGER trg_payment_transition_guard
+CREATE TRIGGER trg_payment_01_transition_guard
   BEFORE UPDATE OF status ON payment
   FOR EACH ROW
   EXECUTE FUNCTION guard_payment_transition();
@@ -183,10 +183,33 @@ BEGIN
 END
 $$;
 
-CREATE TRIGGER trg_payment_paid_at_guard
+CREATE TRIGGER trg_payment_02_paid_at_guard
   BEFORE UPDATE ON payment
   FOR EACH ROW
   EXECUTE FUNCTION guard_payment_paid_at();
+
+-- ---------------------------------------------------------------------------
+-- ORDRE D EXECUTION DES DECLENCHEURS
+-- ---------------------------------------------------------------------------
+-- PostgreSQL execute les declencheurs de MEME evenement dans l ORDRE
+-- ALPHABETIQUE DE LEUR NOM — ni l ordre de creation, ni un ordre declare.
+--
+-- Les noms ci-dessus sont donc numerotes, et le numero EST l ordre. Ce
+-- n'est pas une preference de style : sans lui, `paid_at` passait avant
+-- la transition, et une tentative de retour en arriere etait refusee
+-- pour une raison qui ne designait pas le probleme :
+--
+--     payment_paid_at_incoherent : le paiement porte une date d encaissement
+--     mais son statut est pending
+--
+-- Techniquement vrai, et trompeur. Le responsable est une transition
+-- interdite ; on repond que l horodatage cloche. Celui qui lit part
+-- chercher du cote des dates alors que la cause est ailleurs.
+--
+-- Un nom descriptif laisse croire que l ordre n'a pas d importance. Il en
+-- a : il determine ce que l'utilisateur lit quand une ecriture est
+-- refusee.
+-- ---------------------------------------------------------------------------
 
 -- -------------------------------------------------------------------
 -- 4. On ne peut pas encaisser une reservation annulee
@@ -242,7 +265,7 @@ BEGIN
 END
 $$;
 
-CREATE TRIGGER trg_paid_payment_requires_open_booking
+CREATE TRIGGER trg_payment_03_open_booking_guard
   BEFORE UPDATE OF status ON payment
   FOR EACH ROW
   EXECUTE FUNCTION guard_paid_payment_on_cancelled_booking();

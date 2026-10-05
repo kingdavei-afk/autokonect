@@ -420,6 +420,38 @@ export interface BookingTable {
    * `partner_override` | `plan` | `platform_default`.
    */
   commission_source: Nullable<string>;
+
+  /**
+   * Canal de financement du paiement (migration 0005).
+   *
+   * `platform` : la plateforme encaisse puis reverse. `direct` : le
+   * client paie le proprietaire et la plateforme facture la commission A
+   * PART (arbitrage A-20). IMMUABLE — un client ne peut pas choisir son
+   * canal pour echapper a la commission.
+   */
+  funds_channel: Nullable<string>;
+
+  /**
+   * Regle financiere FIGEE a la creation (migration 0007, CDCS 4.6).
+   *
+   * Contient le delai gratuit, les taux de penalite, la grace de
+   * restitution et la regle de non-presentation, tels qu'ils etaient AU
+   * MOMENT de la reservation. Une modification ulterieure de
+   * `financial_policy` ne doit pas reecrire le sort financier d une
+   * reservation passee.
+   *
+   * Distinct de `pricing_snapshot`, qui porte les MONTANTS. Les deux
+   * etaient confondus pendant la premiere ebauche de la migration 0007,
+   * ce qui faisait produire des montants NULL en silence.
+   */
+  policy_snapshot: Nullable<Json>;
+
+  /** Sanction prelevee sur le client (migration 0007). */
+  cancellation_penalty_amount: Nullable<MoneyInt>;
+
+  /** Part de la caution retenue (migration 0007). */
+  forfeited_deposit_amount: Nullable<MoneyInt>;
+
   customer_notes: Nullable<string>;
   confirmed_at: Nullable<Timestamp>;
   started_at: Nullable<Timestamp>;
@@ -469,6 +501,88 @@ export interface PaymentTable {
   paid_at: Nullable<Timestamp>;
   created_at: CreatedAt;
   updated_at: UpdatedAt;
+}
+
+/**
+ * Journal des notifications recues des prestataires (migration 0008).
+ *
+ * Sa contrainte d unicite sur `(provider_key, external_event_id)` EST la
+ * protection contre le traitement repete. Sans elle, l unicite
+ * reposerait sur un `SELECT` suivi d un `INSERT`, qui n est atomique que
+ * si l appelant pense a isoler les deux dans une transaction — et deux
+ * instances de l API, qui est la configuration de production, y
+ * passeraient toutes les deux.
+ *
+ * `process_outcome` conserve le MOTIF, pas seulement le compte : une
+ * notification rejetee doit pouvoir etre retrouvee, ce que `COUNT(*)`
+ * ne permet pas.
+ */
+export interface ProviderWebhookDeliveryTable {
+  id: UuidPk;
+  provider_key: string;
+  /** Identifiant de l EVENEMENT chez le prestataire. */
+  external_event_id: string;
+  received_at: CreatedAt;
+  processed_at: Nullable<Timestamp>;
+  process_outcome: Nullable<
+    | 'applied'
+    | 'ignored_duplicate'
+    | 'rejected_signature'
+    | 'rejected_unknown'
+    | 'rejected_amount'
+    | 'failed_processing'
+  >;
+  /**
+   * Empreinte du corps recu.
+   *
+   * Detecte une collision d identifiants : deux charges utiles
+   * differentes sous le meme identifiant signifieraient un prestataire
+   * qui reutilise les siens, et il faut le savoir.
+   */
+  payload_sha256: string;
+  /** Rappel court pour diagnostiquer un rejet. Jamais renvoye au client. */
+  error_detail: Nullable<string>;
+}
+
+/**
+ * Politiques financières (migration 0007, CDCS 4.6).
+ *
+ * Parametrees en DONNEES et non en constantes du code : le taux peut
+ * changer sans redeploiement, un proprietaire peut proposer des
+ * conditions differentes, et la valeur appliquee a une reservation doit
+ * pouvoir etre consultee apres coup — ce qui serait impossible si elle
+ * n vivait que dans le code execute au moment du calcul.
+ */
+export interface FinancialPolicyTable {
+  id: UuidPk;
+  scope: 'platform' | 'owner';
+  owner_id: Nullable<Uuid>;
+  priority: number;
+  free_cancellation_hours: number;
+  late_cancellation_penalty_percent: Ratio;
+  no_show_deposit_forfeited: boolean;
+  /** HYPOTHESE non confirmee : false = location non facturee en cas de non-presentation. */
+  no_show_charges_rental: boolean;
+  late_return_grace_minutes: number;
+  late_return_overage_percent: Ratio;
+  active: boolean;
+  valid_from: Timestamp;
+  valid_until: Nullable<Timestamp>;
+  created_at: CreatedAt;
+  updated_at: UpdatedAt;
+}
+
+/**
+ * Catalogue des transitions de paiement autorisees (migration 0008).
+ *
+ * DOIT correspondre a `PAYMENT_TRANSITIONS` dans `@adkcars/contracts`. Un
+ * declencheur detecte la divergence a l ecriture : sans lui, aucun test
+ * ne la verrait, puisque les tests unitaires regardent le contrat et les
+ * tests SQL regardent la base.
+ */
+export interface PaymentStatusTransitionTable {
+  from_status: 'pending' | 'authorized' | 'paid' | 'failed' | 'cancelled' | 'refunded';
+  to_status: 'pending' | 'authorized' | 'paid' | 'failed' | 'cancelled' | 'refunded';
 }
 
 export interface RefundTable {
@@ -798,6 +912,9 @@ export interface Database {
   booking_status_history: BookingStatusHistoryTable;
 
   payment: PaymentTable;
+  financial_policy: FinancialPolicyTable;
+  payment_status_transition: PaymentStatusTransitionTable;
+  provider_webhook_delivery: ProviderWebhookDeliveryTable;
   refund: RefundTable;
   payout: PayoutTable;
 

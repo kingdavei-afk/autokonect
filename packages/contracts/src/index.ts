@@ -162,3 +162,69 @@ export type {
   VehicleSearchInput,
   VehicleSummary,
 } from './vehicle/vehicle.schema.js';
+
+// ---------------------------------------------------------------------------
+// Paiement (CDCS 14.2)
+// ---------------------------------------------------------------------------
+// Ces deux fichiers sont la source unique de verite du module Paiement.
+// Ils sont aussi, depuis la migration 0008, DOUBLES par un catalogue en
+// base (`payment_status_transition`) : le code autorise selon les
+// transitions declarees ici, la base impose selon les siennes.
+//
+// Un declencheur detecte la divergence a l'ecriture. Aucun test ne le
+// ferait : les tests unitaires verifient ce fichier, les tests SQL
+// verifient la base, et aucun ne regarde l'autre.
+export {
+  assertPaymentTransition,
+  canTransitionPayment,
+  isPaymentSettled,
+  isPaymentStatus,
+  isPaymentTerminal,
+  PAYMENT_KINDS,
+  PAYMENT_METHODS,
+  PAYMENT_SETTLED_STATUSES,
+  PAYMENT_STATUSES,
+  PAYMENT_TERMINAL_STATUSES,
+  PAYMENT_TRANSITIONS,
+  PaymentTransitionNotAllowedError,
+  REFUND_KINDS,
+  REFUND_STATUSES,
+  shouldIgnoreRepeatedWebhook,
+} from './payment/payment-state-machine.js';
+export type {
+  PaymentKind,
+  PaymentMethod,
+  PaymentStatus,
+  PaymentTerminalStatus,
+  RefundKind,
+  RefundStatus,
+} from './payment/payment-state-machine.js';
+
+export { PaymentDeclinedError, PaymentProviderUnavailableError } from './payment/payment-provider.js';
+export type {
+  CreatePaymentIntentInput,
+  ExternalPaymentRef,
+  PaymentIntent,
+  PaymentProvider,
+  ProviderWebhook,
+} from './payment/payment-provider.js';
+
+// Schemas d'entree et de sortie du module Paiement.
+export {
+  createPaymentRequestSchema,
+  externalRefSchema,
+  paymentIntentSchema,
+  paymentKindSchema,
+  paymentMethodSchema,
+  paymentStatusSchema,
+  providerWebhookSchema,
+  requestRefundSchema,
+  webhookOutcomeSchema,
+} from './payment/payment.schema.js';
+export type {
+  CreatePaymentRequest,
+  PaymentIntentOutput,
+  ProviderWebhookInput,
+  RequestRefundInput,
+  WebhookOutcome,
+} from './payment/payment.schema.js';

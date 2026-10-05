@@ -43,8 +43,28 @@ export const BOOKING_TRANSITIONS: Readonly<
   // Le client constitue son panier sans s'engager.
   draft: ['awaiting_payment'],
 
-  // Paiement en attente. Expire si le client ne paie pas.
-  awaiting_payment: ['paid', 'expired'],
+  /**
+   * Paiement en attente.
+   *
+   * `expired` est declenche par la tache planifiee : c'est le sort d une
+   * reservation OUBLIEE, thirty minutes plus tard.
+   *
+   * `cancelled_client` est le sort d une reservation REFUSEE. Les deux
+   * sont necessaires, et les confondre rendait le systeme injuste : un
+   * client qui reservait puis changeait d avis ne pouvait pas annuler.
+   * Il devait attendre l expiration, en laissant le vehicule bloque au
+   * calendrier pendant ce temps.
+   *
+   * Aucune sanction n'est appliquee. Rien n'a ete encaisse, aucune
+   * caution n'est retenue — A-04 n'est pas en vigueur — donc il n'y a
+   * ni remboursement ni penalite. `booking_financial_outcome` ne doit
+   * donc PAS etre appele sur cette transition : elle presupposerait un
+   * encaissement.
+   *
+   * `cancelled_provider` est exclu : le fournisseur n'a pas a annuler
+   * une reservation impayee, et celle-ci expirera de toute facon.
+   */
+  awaiting_payment: ['paid', 'expired', 'cancelled_client'],
 
   // Payee : le vehicule est bloque. Peut etre annulee par l'une ou
   // l'autre partie tant que la prise en charge n'a pas eu lieu.

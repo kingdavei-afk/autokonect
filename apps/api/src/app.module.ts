@@ -13,6 +13,7 @@ import { NotificationsModule } from './modules/notifications/notifications.modul
 import { VehiclesModule } from './modules/vehicles/vehicles.module';
 import { AdminVehiclesModule } from './modules/admin-vehicles/admin-vehicles.module';
 import { RealtimeModule } from './modules/realtime/realtime.module';
+import { PaymentModule } from './modules/payment/payment.module';
 
 /**
  * Ordre d'importation : ConfigModule d'abord, car il valide
@@ -36,6 +37,7 @@ import { RealtimeModule } from './modules/realtime/realtime.module';
     VehiclesModule,
     AdminVehiclesModule,
     BookingModule,
+    PaymentModule,
     RealtimeModule,
     HealthModule,
   ],

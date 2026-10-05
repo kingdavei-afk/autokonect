@@ -72,6 +72,21 @@ export interface PaymentIntent {
 export interface ProviderWebhook {
   /** Reference de l'intention concernee. */
   externalRef: ExternalPaymentRef;
+
+  /**
+   * Identifiant de l EVENEMENT chez le prestataire.
+   *
+   * C'est lui qui fait l unicite du journal : deux appels a des instants
+   * differents pour le meme evenement sont le meme evenement.
+   *
+   * Il ne doit PAS etre deduit de la reference et du statut. Ce couple
+   * designe un ETAT, pas un evenement : il confondrait deux
+   * notifications distinctes portant le meme statut, qui seraient alors
+   * l'unee ignoree a tort.
+   *
+   * Tout prestataire expose ce champ. Ce module ne doit pas le deviner.
+   */
+  externalEventId?: string;
   status: PaymentStatus;
   /** Montant confirme par le prestataire, s'il le transmet. */
   amount?: bigint;

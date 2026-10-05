@@ -263,7 +263,24 @@ describe('transitions par acteur', () => {
     // anticipée », pas une annulation : cela passe par un autre circuit
     // et ne doit pas beneficier des memes conditions.
     expect(isCancellableByClient('in_progress')).toBe(false);
-    expect(isCancellableByClient('awaiting_payment')).toBe(false);
+    // `awaiting_payment` n'est PAS dans ce cas : rien n'y est paye et
+    // rien n'y est pris. Voir le test suivant.
     expect(isCancellableByClient('closed')).toBe(false);
+  });
+
+  it('le client PEUT annuler une reservation qui n est pas encore payee', () => {
+    // Rien n'a ete encaisse, aucune caution n'est retenue — A-04 n'est pas
+    // en vigueur. Il n'y a donc ni remboursement ni penalite, et
+    // `booking_financial_outcome` ne doit pas etre appele sur cette
+    // transition : elle presupposerait un encaissement.
+    //
+    // Interdire cette annulation signifiait qu'un client qui reservait puis
+    // changeait d'avis ne pouvait qu'attendre l'expiration, en laissant le
+    // vehicule bloque au calendrier pendant ce temps.
+    //
+    // La sanction prevue, `expired`, est le sort d'une reservation
+    // OUBLIEE. Elle ne convient pas a une reservation REFUSEE : le client
+    // a decide, et le systeme ne doit pas le contredire.
+    expect(isCancellableByClient('awaiting_payment')).toBe(true);
   });
 });

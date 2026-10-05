@@ -91,6 +91,27 @@ export const envSchema = z
 
     // ---- Limitation de debit (CDCS 12.4) ---------------------------
     THROTTLE_TTL_SECONDS: z.coerce.number().int().min(1).default(60),
+
+    // ---- Prestataire de paiement (CDCS 14) --------------------------
+    /**
+     * Cle de signature des notifications.
+     *
+     * Elle determine QUI peut declarer un paiement recu : la divulguer
+     * permet de confirmer n'importe quelle reservation sans avoir paye.
+     * Elle est donc traitee comme les secrets JWT — et absente de
+     * `.env.example` avec une valeur, pour qu'aucun secret ne soit
+     * deploye depuis un exemple.
+     */
+    PAYMENT_PROVIDER_SECRET: z.string().default(''),
+
+    /**
+     * Fenetre de tolerance d'une notification, en secondes.
+     *
+     * Borne superieure a 900 : au-dela, une signature capturee reste
+     * rejouable trop longtemps. Les prestataires continentaux anxient des
+     * delai de quelques minutes, pas d'une demi-heure.
+     */
+    PAYMENT_WEBHOOK_TOLERANCE_SECONDS: z.coerce.number().int().min(30).max(900).default(300),
     THROTTLE_LIMIT_SHORT: z.coerce.number().int().min(1).default(20),
     THROTTLE_LIMIT_MEDIUM: z.coerce.number().int().min(1).default(100),
   })
@@ -109,6 +130,32 @@ export const envSchema = z
               'pas etre utilise en production (CDCS 12.4)',
           });
         }
+      }
+
+      // ---- Cle de signature des notifications ----------------------
+      // Verifiee ICI, en production, et non au premier encaissement.
+      // Une cle absente ou faible ne doit pas se decouvrir le jour ou un
+      // client paie et que rien ne se passe : le service demarre encore,
+      // tout fonctionne, et le probleme n'apparait qu a l'usage.
+      if (env.PAYMENT_PROVIDER_SECRET.length < 32) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['PAYMENT_PROVIDER_SECRET'],
+          message:
+            'doit comporter au moins 32 caracteres en production : cette cle ' +
+            'determine qui peut declarer un paiement recu. Une cle faible ' +
+            'la rend imitable.',
+        });
+      }
+
+      if (env.PAYMENT_PROVIDER_SECRET.startsWith(DEV_SECRET_PREFIX)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['PAYMENT_PROVIDER_SECRET'],
+          message:
+            `un secret de developpement (prefixe "${DEV_SECRET_PREFIX}") ne peut ` +
+            'pas signer les notifications en production (CDCS 12.4)',
+        });
       }
 
       // ---- Argon2 ---------------------------------------------------

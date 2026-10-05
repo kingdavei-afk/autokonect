@@ -31,6 +31,33 @@ export const NEST_FACTORY_OPTIONS = {
   logger: false as const,
   bufferLogs: true,
   abortOnError: false,
+
+  /**
+   * Copie des OCTETS RECUS du corps JSON, dans `request.rawBody`.
+   *
+   * La signature d un prestataire porte sur les octets, pas sur ce
+   * qu un analyseur en ferait. `express.json()` transforme le corps en
+   * objet : l ordre des champs, les espaces et l echappement changent,
+   * et la signature ne correspond plus. Tout webhook legitime serait
+   * alors refuse.
+   *
+   * L option se pose ICI, a la creation de l application, et non sur
+   * `useBodyParser` : c est Nest qui la transmet a son analyseur, et
+   * `body-parser` ignore silencieusement un nom qu il ne connait pas.
+   * Placee au mauvais endroit, elle ne produit ni erreur ni avertissement
+   * — l application demarre normalement et refuse tous les webhooks. C est
+   * le pire defaut de configuration possible : silencieux et constant, on
+   * ne le distingue pas d un prestataire casse.
+   *
+   * Elle est dans les options PARTAGEES, donc appliquees par les deux
+   * points d entree — le serveur autonome et la fonction serverless.
+   * Sinon les deux produiraient des comportements differents, dont on
+   * decouvrirait la difference a l hebergement.
+   *
+   * Cout : une copie de chaque corps JSON en memoire. La limite de taille
+   * s'applique toujours, et seule la route de webhook la lit.
+   */
+  rawBody: true,
 };
 
 /**

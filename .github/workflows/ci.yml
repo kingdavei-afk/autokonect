@@ -166,6 +166,144 @@ jobs:
         run: pnpm --filter @adkcars/database test:privileges
 
   # ==========================================================================
+  # Parcours de bout en bout
+  # ==========================================================================
+  # Separe de `socle` parce qu'il exige une API EN ECOUTE. Le lancer dans
+  # le meme job obligerait a demarrer un serveur, attendre qu'il soit
+  # pret, puis l'arreter — trois etapes qui peuvent echouer chacune de
+  # leur cote, et dont l'echec ressemble a un defaut du produit.
+  #
+  # AVOIR UNE API DEMARREE change le port, donc `DATABASE_URL`. La base
+  # de test reste dediee a ce job : `adkcars_e2e_${{ github.run_id }}`.
+  # ==========================================================================
+  bout-en-bout:
+    name: Parcours de bout en bout
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      NODE_VERSION: '22'
+      DIRECT_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/postgres
+      PGHOST: localhost
+      PGPORT: '5432'
+      PGUSER: postgres
+      PGPASSWORD: postgres
+      PGSSLMODE: disable
+      PSQL_BIN: psql
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/adkcars_e2e_${{ github.run_id }}
+      PORT: '3000'
+      # Les tests lisent le code OTP et la signature du prestataire dans
+      # les journaux de l API. Sans ces deux valeurs, les parcours
+      # echouent non pas parce que le code est casse, mais parce qu ils
+      # ne peuvent pas lire ce qu ils doivent lire.
+      PAYMENT_PROVIDER_SECRET: ${{ secrets.PAYMENT_PROVIDER_SECRET }}
+      FALLBACK_PAYMENT_PROVIDER_SECRET: test-uniquement-paiement-cle-de-signature-64-caracteres-minimum
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Installer le client PostgreSQL
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes postgresql-client
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.34.6
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm -r --filter './packages/**' build
+      - run: pnpm --filter @adkcars/api build
+
+      - name: Appliquer les migrations
+        env:
+          ADKCARS_TEST_DB: adkcars_e2e_${{ github.run_id }}
+        run: pnpm --filter @adkcars/database migrate:reset
+
+      # La cle de signature doit exister AVANT le demarrage : le
+      # simulateur refuse d'ouvrir des paiements sans elle. C'est le
+      # comportement voulu — mieux vaut un service indisponible qu un
+      # service que n'importe qui peut imiter.
+      - name: Verifier la configuration du prestataire
+        run: |
+          if [ -z "${PAYMENT_PROVIDER_SECRET}" ]; then
+            export PAYMENT_PROVIDER_SECRET="${FALLBACK_PAYMENT_PROVIDER_SECRET}"
+            echo "::warning::PAYMENT_PROVIDER_SECRET absent — cle de test utilisee"
+          fi
+          echo "cle de signature : ${#PAYMENT_PROVIDER_SECRET} caracteres"
+
+      - name: Demarrer l API
+        run: |
+          npx tsx apps/api/src/main.ts > api.log 2> api.err.log &
+          echo $! > api.pid
+
+          # Attendre que l API reponde VRAIMENT, pas qu elle existe.
+          # Un `sleep` fixe est une course : sur une machine chargee, il
+          # expire avant que le serveur ne soit pret, et le parcours
+          # echoue sur une connexion refusee — un echec qui ne dit rien
+          # du produit.
+          for tentative in $(seq 1 60); do
+            if curl --silent --fail http://127.0.0.1:3000/health/live > /dev/null; then
+              echo "API prete apres ${tentative}s"
+              exit 0
+            fi
+            sleep 1
+          done
+
+          echo "API demarre mais ne repond pas"
+          tail -50 api.err.log || true
+          exit 1
+
+      - name: Parcours d authentification
+        run: pwsh -File apps/api/test/auth-flow.ps1
+
+      - name: Parcours vehicules
+        run: pwsh -File apps/api/test/vehicles-flow.ps1
+
+      - name: Parcours administration
+        run: pwsh -File apps/api/test/admin-flow.ps1
+
+      - name: Flux temps reel
+        run: pwsh -File apps/api/test/realtime-flow.ps1
+
+      - name: Parcours de reservation
+        run: pwsh -File apps/api/test/booking-flow.ps1
+
+      - name: Parcours de paiement
+        run: python3 apps/api/test/payment-flow.py
+
+      - name: Journaux en cas d echec
+        if: failure()
+        run: |
+          echo "=== erreurs ==="
+          tail -80 api.err.log || true
+          echo "=== acces ==="
+          tail -40 api.log || true
+
+      - name: Arreter l API
+        if: always()
+        run: kill "$(cat api.pid)" 2>/dev/null || true
+  # ==========================================================================
   # Formatage - signale sans interdire.
   # ==========================================================================
   # Volontairement tolerant (`continue-on-error`). Un derangement de
